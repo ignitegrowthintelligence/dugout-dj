@@ -1,0 +1,1730 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#0b0d10">
+<title>Dugout DJ</title>
+<!--
+  Dugout DJ — single-file softball game-day remote.
+  Spotify Web Playback SDK + local Web Audio soundboard + lineup walk-ups + v1.5 mixer.
+  Built for Justin. Vanilla JS, no frameworks. All state persisted to IndexedDB.
+
+  SPOTIFY REDIRECT URI:
+    The PKCE flow uses window.location.origin + pathname as the redirect URI at runtime,
+    so wherever this file is hosted, register that exact URL in the Spotify dev app.
+    Expected production URL: https://<github-user>.github.io/dugout-dj/
+    For local dev (file://) Spotify auth will not work — host it.
+-->
+<style>
+  :root {
+    --bg: #0b0d10;
+    --bg-2: #15191f;
+    --bg-3: #1d232b;
+    --surface: #232a33;
+    --line: #2a323d;
+    --text: #f1f4f8;
+    --text-dim: #9aa4b2;
+    --accent: #1db954;        /* spotify green */
+    --accent-2: #2ee066;
+    --warn: #e7a93b;
+    --danger: #e0524d;
+    --pill: #3a4452;
+    --shadow: 0 10px 30px rgba(0,0,0,.45);
+    --r-sm: 8px;
+    --r-md: 14px;
+    --r-lg: 22px;
+    --tap: 56px;
+    --bar-h: 96px;
+    --tabs-h: 64px;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin:0; padding:0; height:100%; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, system-ui, sans-serif; -webkit-font-smoothing: antialiased; overscroll-behavior: none; }
+  body { display:flex; flex-direction:column; min-height:100vh; }
+  button, input, textarea, select { font: inherit; color: inherit; }
+  button { background: transparent; border: 0; cursor: pointer; }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-thumb { background: #2a323d; border-radius: 8px; }
+
+  /* ---- header ---- */
+  header {
+    padding: 14px 16px 10px;
+    display:flex; align-items:center; justify-content: space-between;
+    border-bottom: 1px solid var(--line);
+    background: linear-gradient(180deg, #11151b, #0b0d10);
+    position: sticky; top: 0; z-index: 30;
+  }
+  header .brand { display:flex; align-items:center; gap:10px; }
+  header .brand .logo {
+    width: 34px; height:34px; border-radius: 10px;
+    background: radial-gradient(circle at 30% 30%, #2ee066, #0d6c33 70%);
+    box-shadow: 0 4px 14px rgba(46,224,102,.35);
+  }
+  header h1 { font-size: 18px; margin:0; letter-spacing: .3px; }
+  header .sub { font-size: 11px; color: var(--text-dim); }
+  header .right { display:flex; gap: 8px; }
+  .icon-btn {
+    width: 38px; height: 38px; border-radius: 12px; background: var(--bg-3);
+    display:inline-flex; align-items:center; justify-content:center; color: var(--text-dim);
+    border: 1px solid var(--line);
+  }
+  .icon-btn:active { transform: scale(.96); }
+
+  /* ---- tabs ---- */
+  nav.tabs {
+    display: grid; grid-template-columns: 1fr 1fr 1fr;
+    height: var(--tabs-h); border-bottom: 1px solid var(--line);
+    background: var(--bg-2); position: sticky; top: 58px; z-index: 25;
+  }
+  nav.tabs button {
+    color: var(--text-dim); font-weight: 600; letter-spacing: .3px; font-size: 13px;
+    display:flex; flex-direction: column; align-items:center; justify-content:center; gap:4px;
+  }
+  nav.tabs button.active { color: var(--text); }
+  nav.tabs button.active::after {
+    content: ""; display:block; width: 32px; height: 3px; border-radius: 3px; background: var(--accent);
+    position: absolute; transform: translateY(20px);
+  }
+  nav.tabs .ico { font-size: 18px; line-height: 1; }
+
+  /* ---- main scroll area ---- */
+  main {
+    flex: 1; overflow-y: auto; padding: 16px 16px calc(var(--bar-h) + 24px);
+  }
+  section.tab { display:none; }
+  section.tab.active { display:block; }
+
+  /* ---- common ---- */
+  .grid { display:grid; gap: 10px; }
+  .grid.cols-2 { grid-template-columns: 1fr 1fr; }
+  .grid.cols-3 { grid-template-columns: 1fr 1fr 1fr; }
+  .card {
+    background: var(--surface); border:1px solid var(--line);
+    border-radius: var(--r-md); padding: 14px;
+  }
+  .row { display:flex; align-items:center; gap: 10px; }
+  .row.between { justify-content: space-between; }
+  .pill {
+    background: var(--pill); color: var(--text); border-radius: 999px;
+    padding: 4px 10px; font-size: 11px;
+  }
+  .btn {
+    min-height: var(--tap); border-radius: var(--r-md); padding: 12px 16px;
+    background: var(--bg-3); border:1px solid var(--line); color: var(--text);
+    font-weight: 600; letter-spacing: .2px;
+    display:inline-flex; align-items:center; justify-content:center; gap: 8px;
+  }
+  .btn:active { transform: scale(.98); }
+  .btn.primary { background: var(--accent); color:#0b1410; border-color: transparent; }
+  .btn.warn { background: var(--warn); color:#1a1206; border-color: transparent; }
+  .btn.danger { background: var(--danger); color:#170808; border-color: transparent; }
+  .btn.ghost { background: transparent; }
+  .btn.block { width:100%; }
+  .btn.small { min-height: 38px; padding: 6px 12px; font-size: 13px; border-radius: 10px; }
+  .h-title { font-size: 13px; color: var(--text-dim); letter-spacing: .8px; text-transform: uppercase; margin: 4px 0 8px; }
+  .muted { color: var(--text-dim); }
+  .tag { display:inline-block; font-size: 11px; padding: 2px 8px; border-radius: 999px; background: #2a3340; color: var(--text-dim); }
+  .danger-text { color: var(--danger); }
+  input[type=text], input[type=number], textarea, select {
+    background: var(--bg-3); border: 1px solid var(--line); border-radius: 10px;
+    padding: 12px 12px; width: 100%; color: var(--text);
+  }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  label.field { display:block; }
+  label.field > span { font-size: 12px; color: var(--text-dim); margin-bottom: 4px; display:block; }
+
+  /* ---- music tab ---- */
+  .section-grid { display:grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .section-btn {
+    min-height: 84px; border-radius: var(--r-md); padding: 14px;
+    border: 1px solid var(--line); color: var(--text);
+    background: linear-gradient(135deg, var(--bg-3), var(--bg-2));
+    display:flex; flex-direction: column; align-items: flex-start; justify-content: space-between;
+    text-align: left; gap: 6px;
+  }
+  .section-btn:active { transform: scale(.98); }
+  .section-btn .lbl { font-weight: 700; font-size: 15px; }
+  .section-btn .meta { font-size: 11px; color: var(--text-dim); }
+  .section-btn.theme-anytime    { background: linear-gradient(135deg,#1db95433,#15191f); border-color:#1db95466; }
+  .section-btn.theme-rock       { background: linear-gradient(135deg,#e0524d33,#15191f); border-color:#e0524d66; }
+  .section-btn.theme-alt        { background: linear-gradient(135deg,#7c5cff33,#15191f); border-color:#7c5cff66; }
+  .section-btn.theme-poppunk    { background: linear-gradient(135deg,#ff64a233,#15191f); border-color:#ff64a266; }
+  .section-btn.theme-hiphop     { background: linear-gradient(135deg,#f0b32833,#15191f); border-color:#f0b32866; }
+  .section-btn.theme-country    { background: linear-gradient(135deg,#cf9b6033,#15191f); border-color:#cf9b6066; }
+  .section-btn.theme-jam        { background: linear-gradient(135deg,#2ee06633,#15191f); border-color:#2ee06666; }
+  .section-btn.theme-pop        { background: linear-gradient(135deg,#39c5ff33,#15191f); border-color:#39c5ff66; }
+  .section-btn.theme-kid        { background: linear-gradient(135deg,#ffa83333,#15191f); border-color:#ffa83366; }
+  .section-btn.theme-faith      { background: linear-gradient(135deg,#cbd5ff33,#15191f); border-color:#cbd5ff66; }
+  .section-btn.theme-walkoff    { background: linear-gradient(135deg,#ff3b5c33,#15191f); border-color:#ff3b5c66; }
+  .now-playing {
+    display:grid; grid-template-columns: 64px 1fr; gap: 12px; align-items: center;
+    margin-bottom: 12px;
+  }
+  .now-art {
+    width: 64px; height: 64px; border-radius: 10px; background: #000;
+    background-size: cover; background-position: center;
+    border: 1px solid var(--line);
+  }
+  .now-title { font-weight: 700; font-size: 15px; }
+  .now-artist { font-size: 12px; color: var(--text-dim); }
+  .transport { display:grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 8px; margin: 10px 0 14px; }
+  .transport .btn { font-size: 18px; }
+
+  /* ---- sounds tab ---- */
+  .pad-grid { display:grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+  .pad {
+    aspect-ratio: 1 / 1; border-radius: var(--r-md);
+    background: linear-gradient(160deg, #2a323d, #1a2029);
+    border: 1px solid var(--line); position: relative;
+    display:flex; flex-direction: column; align-items:center; justify-content: center;
+    padding: 8px; text-align: center; gap: 6px;
+    color: var(--text);
+  }
+  .pad .pad-label { font-weight: 700; font-size: 13px; word-break: break-word; }
+  .pad.empty { color: var(--text-dim); border-style: dashed; }
+  .pad.playing { box-shadow: inset 0 0 0 2px var(--accent); animation: pulse 1.1s ease-in-out infinite; }
+  .pad .pad-edit {
+    position: absolute; top: 6px; right: 6px;
+    background: rgba(0,0,0,.4); border-radius: 999px; padding: 2px 6px; font-size: 10px; color: var(--text-dim);
+  }
+  @keyframes pulse {
+    0%,100% { filter: brightness(1); }
+    50% { filter: brightness(1.18); }
+  }
+
+  /* ---- lineup tab ---- */
+  .lineup-list { display:flex; flex-direction: column; gap: 10px; }
+  .player {
+    background: var(--surface); border:1px solid var(--line); border-radius: var(--r-md);
+    padding: 12px; display:grid; grid-template-columns: 56px 1fr auto; gap: 12px; align-items: center;
+    position: relative;
+  }
+  .player.active { box-shadow: 0 0 0 2px var(--accent); }
+  .jersey {
+    width: 56px; height: 56px; border-radius: 14px;
+    background: linear-gradient(135deg,#2ee066,#0a7a35); color: #0b1410;
+    display:flex; align-items:center; justify-content: center; font-weight: 800; font-size: 20px;
+  }
+  .player .name { font-weight: 700; font-size: 16px; }
+  .player .meta { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
+  .player .actions { display:flex; flex-direction:column; gap:6px; align-items:flex-end; }
+  .badge {
+    font-size: 10px; padding: 2px 6px; border-radius: 999px;
+    background: var(--bg-3); color: var(--text-dim); border:1px solid var(--line);
+  }
+  .badge.ok { background: #14361f; color: #6cf09b; border-color: #1f5a35; }
+  .badge.warn { background: #3a2a0e; color: #f2c879; border-color: #5a3f15; }
+  .badge.missing { background: #3a1212; color: #f48b86; border-color: #5a1f1f; }
+
+  /* ---- master bar ---- */
+  .master {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 40;
+    height: var(--bar-h); background: linear-gradient(180deg, #14181f, #0b0d10);
+    border-top: 1px solid var(--line);
+    display: grid; grid-template-columns: auto 1fr auto; align-items: center;
+    gap: 10px; padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+    box-shadow: 0 -10px 30px rgba(0,0,0,.4);
+  }
+  .master .stop {
+    width: 76px; height: 56px; border-radius: 16px; background: var(--danger); color:#170808;
+    font-weight: 800; font-size: 14px; letter-spacing: .8px;
+  }
+  .master .fade {
+    width: 64px; height: 56px; border-radius: 16px; background: var(--warn); color:#1a1206;
+    font-weight: 800; font-size: 13px;
+  }
+  .master .vol { display:flex; flex-direction: column; gap: 4px; }
+  .master .vol-row { display:flex; align-items:center; gap: 10px; }
+  .master .vol-row span { font-size: 11px; color: var(--text-dim); width: 22px; text-align: right; }
+
+  /* ---- modals ---- */
+  .modal-back {
+    position: fixed; inset: 0; background: rgba(0,0,0,.65); z-index: 80;
+    display:none; align-items: flex-end; justify-content: center;
+  }
+  .modal-back.open { display:flex; }
+  .modal {
+    width: 100%; max-width: 720px; max-height: 92vh; overflow-y:auto;
+    background: var(--bg-2); border-top-left-radius: 22px; border-top-right-radius: 22px;
+    border: 1px solid var(--line); border-bottom: 0;
+    padding: 14px 14px calc(20px + env(safe-area-inset-bottom));
+    box-shadow: var(--shadow);
+  }
+  .modal h2 { margin: 4px 0 12px; font-size: 18px; }
+  .modal .close-row { display:flex; justify-content: space-between; align-items: center; }
+  .modal-handle {
+    width: 40px; height: 4px; background: #3a4452; border-radius: 4px;
+    margin: 0 auto 10px; opacity: .8;
+  }
+
+  /* ---- mixer ---- */
+  .mixer-canvas-wrap {
+    background: var(--bg-3); border: 1px solid var(--line);
+    border-radius: 12px; padding: 8px; position: relative; touch-action: none;
+  }
+  canvas.mixer-canvas { display:block; width:100%; height: 240px; background: transparent; touch-action: none; }
+  .mixer-toolbar { display:grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+  .mixer-sliders { display:grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
+  .mixer-sliders label.field { margin: 0; }
+  .mode-toggle {
+    display:flex; gap: 6px; background: var(--bg-3); padding: 4px; border-radius: 999px;
+    border:1px solid var(--line); align-self: start;
+  }
+  .mode-toggle button {
+    padding: 8px 14px; border-radius: 999px; color: var(--text-dim); font-weight: 600; font-size: 12px;
+  }
+  .mode-toggle button.on { background: var(--accent); color:#0b1410; }
+  .meter {
+    height: 6px; background: var(--bg-3); border-radius: 4px; overflow:hidden;
+  }
+  .meter > span { display:block; height:100%; background: var(--accent); width: 0%; transition: width .05s linear; }
+
+  /* ---- toast ---- */
+  .toast {
+    position: fixed; bottom: calc(var(--bar-h) + 16px); left: 50%; transform: translateX(-50%);
+    background: #1b2230; color: var(--text); border:1px solid var(--line); padding: 10px 16px;
+    border-radius: 999px; font-size: 13px; opacity: 0; pointer-events: none;
+    transition: opacity .2s ease; z-index: 90; max-width: 90vw;
+  }
+  .toast.show { opacity: 1; }
+
+  /* tiny mobile-first detail */
+  @media (min-width: 720px) {
+    main { max-width: 720px; margin: 0 auto; width: 100%; }
+    header, nav.tabs, .master { max-width: 720px; margin: 0 auto; left: 50%; transform: translateX(-50%); }
+    .master { left: auto; transform: none; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <div class="logo"></div>
+    <div>
+      <h1>Dugout DJ</h1>
+      <div class="sub" id="connSub">Game-day remote</div>
+    </div>
+  </div>
+  <div class="right">
+    <button class="icon-btn" id="btnAdmin" title="Configure">⚙</button>
+    <button class="icon-btn" id="btnAuth" title="Spotify">♫</button>
+  </div>
+</header>
+
+<nav class="tabs" role="tablist">
+  <button class="active" data-tab="music"><span class="ico">♫</span>Music</button>
+  <button data-tab="sounds"><span class="ico">▦</span>Sounds</button>
+  <button data-tab="lineup"><span class="ico">⚾</span>Lineup</button>
+</nav>
+
+<main>
+  <!-- ================= MUSIC TAB ================= -->
+  <section class="tab active" id="tab-music">
+    <div class="card" id="nowPlayingCard">
+      <div class="now-playing">
+        <div class="now-art" id="nowArt"></div>
+        <div>
+          <div class="now-title" id="nowTitle">Not playing</div>
+          <div class="now-artist" id="nowArtist">Connect Spotify to begin</div>
+        </div>
+      </div>
+      <div class="transport">
+        <button class="btn" id="trPrev">⏮</button>
+        <button class="btn primary" id="trPlay">▶︎</button>
+        <button class="btn" id="trNext">⏭</button>
+        <button class="btn" id="trShuffle" title="Shuffle within section">⇋</button>
+      </div>
+    </div>
+
+    <div class="h-title">Sections — Softball 2026</div>
+    <div class="section-grid" id="sectionGrid">
+      <!-- populated by JS -->
+    </div>
+    <div style="height: 12px"></div>
+    <button class="btn block ghost" id="btnRefreshPlaylist">⟳ Reload playlist from Spotify</button>
+  </section>
+
+  <!-- ================= SOUNDS TAB ================= -->
+  <section class="tab" id="tab-sounds">
+    <div class="row between" style="margin-bottom: 10px;">
+      <div class="h-title" style="margin:0;">Soundboard</div>
+      <button class="btn small" id="btnAddPad">+ Add pad</button>
+    </div>
+    <div class="pad-grid" id="padGrid"></div>
+    <p class="muted" style="font-size:12px; margin-top: 14px;">
+      Pads play locally — no signal required. Spotify auto-ducks while a pad plays.
+    </p>
+  </section>
+
+  <!-- ================= LINEUP TAB ================= -->
+  <section class="tab" id="tab-lineup">
+    <div class="row between" style="margin-bottom: 10px;">
+      <div class="h-title" style="margin:0;">Batting Order</div>
+      <div class="row" style="gap:6px">
+        <button class="btn small" id="btnNextBatter">Next ▶︎</button>
+        <button class="btn small" id="btnAddPlayer">+ Player</button>
+      </div>
+    </div>
+    <div class="lineup-list" id="lineupList"></div>
+    <div class="row" style="margin-top: 12px; justify-content: space-between;">
+      <label class="row" style="gap:8px">
+        <input type="checkbox" id="chkTTS">
+        <span class="muted" style="font-size:12px">Use TTS announcement if no clip</span>
+      </label>
+    </div>
+  </section>
+</main>
+
+<!-- ================ MASTER BAR ================ -->
+<div class="master">
+  <button class="stop" id="masterStop">STOP</button>
+  <div class="vol">
+    <div class="row between" style="font-size:11px;color:var(--text-dim)">
+      <span>Master / Spotify volume</span>
+      <span id="volLabel">100%</span>
+    </div>
+    <div class="vol-row">
+      <span>♪</span>
+      <input type="range" id="masterVol" min="0" max="100" value="100">
+    </div>
+  </div>
+  <button class="fade" id="masterFade">FADE</button>
+</div>
+
+<!-- ================ ADMIN / CONFIG MODAL ================ -->
+<div class="modal-back" id="modalAdmin">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <div class="close-row">
+      <h2>Configure</h2>
+      <button class="btn small ghost" id="adminClose">Close</button>
+    </div>
+
+    <div class="card" style="margin-bottom:10px">
+      <div class="h-title" style="margin-top:0">Spotify</div>
+      <div id="spotifyStatus" class="muted" style="font-size:13px; margin-bottom:8px">Not connected.</div>
+      <div class="row" style="gap:8px; flex-wrap:wrap">
+        <button class="btn small primary" id="btnSpotifyLogin">Connect Spotify</button>
+        <button class="btn small ghost" id="btnSpotifyLogout">Disconnect</button>
+        <button class="btn small ghost" id="btnTransfer">Transfer to this device</button>
+      </div>
+      <div class="muted" style="font-size:11px; margin-top: 8px;">
+        Redirect URI in use: <code id="redirectUri">—</code><br>
+        Register this exact URI in the Spotify dev app.
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:10px">
+      <div class="h-title" style="margin-top:0">Playlist sections</div>
+      <div class="muted" style="font-size:12px; margin-bottom:8px">
+        Confirm or adjust where each section starts in the Softball 2026 playlist
+        (track index, 1-based). The list ends at the next section's start.
+      </div>
+      <div id="sectionsEditor"></div>
+      <div class="row" style="gap:8px; margin-top:8px">
+        <button class="btn small primary" id="btnSaveSections">Save</button>
+        <button class="btn small ghost" id="btnResetSections">Reset to defaults</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="h-title" style="margin-top:0">Danger zone</div>
+      <button class="btn small danger" id="btnWipe">Wipe all local data</button>
+    </div>
+  </div>
+</div>
+
+<!-- ================ PLAYER EDIT MODAL ================ -->
+<div class="modal-back" id="modalPlayer">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <div class="close-row">
+      <h2 id="playerModalTitle">Edit player</h2>
+      <button class="btn small ghost" id="playerClose">Close</button>
+    </div>
+    <div class="grid" style="gap:12px">
+      <label class="field"><span>Name</span><input type="text" id="pName" placeholder="Player name"></label>
+      <label class="field"><span>Jersey #</span><input type="text" id="pNum" placeholder="00"></label>
+      <div class="card">
+        <div class="row between"><div class="h-title" style="margin:0">Walk-up song (local file)</div><span class="badge" id="bWalk">missing</span></div>
+        <div class="row" style="gap:8px; margin-top:8px">
+          <input type="file" id="fWalk" accept="audio/*" style="display:none">
+          <button class="btn small" id="btnPickWalk">Choose file</button>
+          <button class="btn small ghost" id="btnPlayWalk">Preview</button>
+          <button class="btn small ghost danger" id="btnClearWalk">Clear</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="row between"><div class="h-title" style="margin:0">Announcement clip</div><span class="badge" id="bAnn">missing</span></div>
+        <div class="row" style="gap:8px; margin-top:8px">
+          <input type="file" id="fAnn" accept="audio/*" style="display:none">
+          <button class="btn small" id="btnPickAnn">Choose file</button>
+          <button class="btn small ghost" id="btnPlayAnn">Preview</button>
+          <button class="btn small ghost danger" id="btnClearAnn">Clear</button>
+        </div>
+        <div class="muted" style="font-size:11px;margin-top:6px">If empty, the TTS announcement (if enabled) will be used.</div>
+      </div>
+      <div class="card">
+        <div class="row between"><div class="h-title" style="margin:0">Mixed walk-up</div><span class="badge" id="bMix">missing</span></div>
+        <div class="row" style="gap:8px; margin-top:8px; flex-wrap:wrap">
+          <button class="btn small primary" id="btnOpenMixer">🎚 Mix walk-up</button>
+          <button class="btn small ghost" id="btnPlayMix">Preview mix</button>
+          <button class="btn small ghost danger" id="btnClearMix">Clear mix</button>
+        </div>
+      </div>
+      <div class="row" style="gap:8px; justify-content:space-between">
+        <button class="btn danger" id="btnDeletePlayer">Delete player</button>
+        <button class="btn primary" id="btnSavePlayer">Save</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ================ MIXER MODAL ================ -->
+<div class="modal-back" id="modalMixer">
+  <div class="modal" style="max-width: 900px;">
+    <div class="modal-handle"></div>
+    <div class="close-row">
+      <h2>Mix Walk-up <span class="muted" style="font-size:12px; margin-left:6px" id="mixerSubtitle"></span></h2>
+      <button class="btn small ghost" id="mixerClose">Close</button>
+    </div>
+
+    <div class="mixer-canvas-wrap">
+      <canvas class="mixer-canvas" id="mixCanvas" width="900" height="240"></canvas>
+    </div>
+
+    <div class="mixer-toolbar">
+      <div class="mode-toggle" id="modeToggle">
+        <button class="on" data-mode="auto">Auto-duck</button>
+        <button data-mode="manual">Advanced</button>
+      </div>
+      <div class="row" style="gap:8px; justify-content:flex-end">
+        <button class="btn small" id="btnPreviewMix">▶︎ Preview</button>
+        <button class="btn small ghost" id="btnStopPreviewMix">■ Stop</button>
+        <button class="btn small primary" id="btnSaveMix">Save mix</button>
+      </div>
+    </div>
+
+    <div class="mixer-sliders">
+      <label class="field"><span>Duck depth <em id="lblDepth">0.20</em></span>
+        <input type="range" id="sDepth" min="0" max="1" step="0.01" value="0.20"></label>
+      <label class="field"><span>Ramp-down (s) <em id="lblRdown">0.50</em></span>
+        <input type="range" id="sRdown" min="0" max="3" step="0.05" value="0.50"></label>
+      <label class="field"><span>Ramp-up (s) <em id="lblRup">1.00</em></span>
+        <input type="range" id="sRup" min="0" max="5" step="0.05" value="1.00"></label>
+      <label class="field"><span>Announcement vol <em id="lblAvol">1.00</em></span>
+        <input type="range" id="sAvol" min="0" max="1.5" step="0.01" value="1.00"></label>
+    </div>
+
+    <div class="muted" style="font-size:12px; margin-top: 10px">
+      Drag the <span style="color:#ffa833">orange</span> announcement bar to set when it kicks in.
+      In <em>Advanced</em>, tap an empty spot on the song envelope to add a point, drag to move,
+      double-tap an existing point to remove it.
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* ============================================================================
+   Dugout DJ — single-file game-day remote
+   ============================================================================ */
+
+/* ---------- tiny helpers ---------- */
+const $  = (s, r=document) => r.querySelector(s);
+const $$ = (s, r=document) => Array.from(r.querySelectorAll(s));
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const fmt = n => (Math.round(n*100)/100).toFixed(2);
+function toast(msg, ms=2200){
+  const t = $('#toast'); t.textContent = msg; t.classList.add('show');
+  clearTimeout(toast._h); toast._h = setTimeout(()=>t.classList.remove('show'), ms);
+}
+
+/* ---------- IndexedDB layer ---------- */
+const DB_NAME = 'dugoutdj';
+const DB_VER  = 1;
+const STORES = ['kv','pads','players','blobs']; // blobs: audio files keyed by id
+let _db = null;
+function openDB(){
+  return new Promise((resolve,reject)=>{
+    const req = indexedDB.open(DB_NAME, DB_VER);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      for (const s of STORES) if (!db.objectStoreNames.contains(s)) db.createObjectStore(s, { keyPath: 'id' });
+    };
+    req.onsuccess = () => { _db = req.result; resolve(_db); };
+    req.onerror = () => reject(req.error);
+  });
+}
+function tx(store, mode='readonly'){ return _db.transaction(store, mode).objectStore(store); }
+function dbGet(store, id){ return new Promise((res,rej)=>{ const r = tx(store).get(id); r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error); }); }
+function dbPut(store, val){ return new Promise((res,rej)=>{ const r = tx(store,'readwrite').put(val); r.onsuccess=()=>res(); r.onerror=()=>rej(r.error); }); }
+function dbDel(store, id){ return new Promise((res,rej)=>{ const r = tx(store,'readwrite').delete(id); r.onsuccess=()=>res(); r.onerror=()=>rej(r.error); }); }
+function dbAll(store){ return new Promise((res,rej)=>{ const r = tx(store).getAll(); r.onsuccess=()=>res(r.result||[]); r.onerror=()=>rej(r.error); }); }
+async function kvGet(k, dflt=null){ const v = await dbGet('kv', k); return v? v.value : dflt; }
+async function kvSet(k, v){ await dbPut('kv', { id:k, value:v }); }
+async function blobPut(id, blob){ await dbPut('blobs', { id, blob }); }
+async function blobGet(id){ const r = await dbGet('blobs', id); return r? r.blob : null; }
+async function blobDel(id){ await dbDel('blobs', id); }
+function uuid(){ return 'id-' + Math.random().toString(36).slice(2,10) + Date.now().toString(36); }
+
+/* ---------- shared Web Audio context ---------- */
+let AC = null;
+function audio(){
+  if (!AC) AC = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 'interactive' });
+  if (AC.state === 'suspended') AC.resume();
+  return AC;
+}
+async function decodeBlob(blob){
+  const buf = await blob.arrayBuffer();
+  return await audio().decodeAudioData(buf.slice(0));
+}
+
+/* one local-playback bus -> master gain -> destination */
+let localBus = null;
+function getLocalBus(){
+  const ctx = audio();
+  if (!localBus){
+    localBus = ctx.createGain();
+    localBus.gain.value = 1.0;
+    localBus.connect(ctx.destination);
+  }
+  return localBus;
+}
+
+/* ---------- Default playlist sections (used until user reconfigures) ---------- */
+const DEFAULT_SECTIONS = [
+  { id:'anytime',  label:'Anytime / Top 50', start: 1,   themeClass:'theme-anytime' },
+  { id:'rock',     label:'Rock & Roll',      start: 51,  themeClass:'theme-rock' },
+  { id:'alt90',    label:"90s Alternative",  start: 65,  themeClass:'theme-alt' },
+  { id:'poppunk',  label:'Pop-Punk',         start: 78,  themeClass:'theme-poppunk' },
+  { id:'hiphop',   label:'90s/2000s Hip Hop',start: 89,  themeClass:'theme-hiphop' },
+  { id:'country',  label:'Country',          start: 98,  themeClass:'theme-country' },
+  { id:'jam',      label:'Jam / Between-Innings', start: 105, themeClass:'theme-jam' },
+  { id:'pop',      label:'Pop / Summer',     start: 113, themeClass:'theme-pop' },
+  { id:'kid',      label:'Kid / TikTok',     start: 130, themeClass:'theme-kid' },
+  { id:'faith',    label:'Faith',            start: 145, themeClass:'theme-faith' },
+  { id:'walkoff',  label:'Walk-off / Deep cuts', start: 155, themeClass:'theme-walkoff' },
+];
+
+/* ============================================================================
+   SPOTIFY (PKCE) + Web Playback SDK
+   ============================================================================ */
+const SPOTIFY_CLIENT_ID = '3b06bc3ecdc44678aec5ef75ba575bb2';
+const SPOTIFY_SCOPES = [
+  'streaming','user-read-email','user-read-private',
+  'user-modify-playback-state','user-read-playback-state',
+  'playlist-read-private'
+].join(' ');
+const REDIRECT_URI = (function(){
+  // Use origin + pathname so it matches whatever URL this is hosted at.
+  const u = new URL(window.location.href);
+  return u.origin + u.pathname;
+})();
+
+function b64url(buf){
+  let s = btoa(String.fromCharCode(...new Uint8Array(buf)));
+  return s.replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+}
+async function pkceChallenge(){
+  const verifier = b64url(crypto.getRandomValues(new Uint8Array(32)));
+  const sha = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier));
+  return { verifier, challenge: b64url(sha) };
+}
+
+const Spotify = {
+  token: null,
+  refresh: null,
+  expiresAt: 0,
+  deviceId: null,
+  player: null,
+  ready: false,
+  state: null,         // last player_state_changed
+  preDuckVolume: 1.0,  // remembered so we can restore after duck
+
+  async init(){
+    const tok = await kvGet('spotify_token');
+    if (tok){ this.token = tok.access; this.refresh = tok.refresh; this.expiresAt = tok.expiresAt; }
+    // If returned from auth, finish exchange
+    const url = new URL(window.location.href);
+    const code = url.searchParams.get('code');
+    if (code){
+      const verifier = await kvGet('pkce_verifier');
+      try{
+        await this._exchangeCode(code, verifier);
+        url.searchParams.delete('code'); url.searchParams.delete('state');
+        history.replaceState({}, '', url.pathname);
+      }catch(e){ console.error(e); toast('Spotify auth failed'); }
+    }
+    if (this.token && Date.now() > this.expiresAt - 30_000 && this.refresh){
+      try{ await this._refreshToken(); }catch(e){ console.warn('refresh failed', e); }
+    }
+    if (this.token) this._loadSdk();
+    this._updateUI();
+  },
+  async login(){
+    const { verifier, challenge } = await pkceChallenge();
+    await kvSet('pkce_verifier', verifier);
+    const params = new URLSearchParams({
+      response_type: 'code',
+      client_id: SPOTIFY_CLIENT_ID,
+      scope: SPOTIFY_SCOPES,
+      redirect_uri: REDIRECT_URI,
+      code_challenge_method: 'S256',
+      code_challenge: challenge,
+    });
+    window.location = 'https://accounts.spotify.com/authorize?' + params.toString();
+  },
+  async _exchangeCode(code, verifier){
+    const body = new URLSearchParams({
+      grant_type: 'authorization_code',
+      code, redirect_uri: REDIRECT_URI,
+      client_id: SPOTIFY_CLIENT_ID,
+      code_verifier: verifier,
+    });
+    const r = await fetch('https://accounts.spotify.com/api/token', {
+      method:'POST',
+      headers:{ 'Content-Type':'application/x-www-form-urlencoded' },
+      body
+    });
+    if (!r.ok) throw new Error('token exchange failed: '+r.status);
+    const j = await r.json();
+    this.token = j.access_token;
+    this.refresh = j.refresh_token;
+    this.expiresAt = Date.now() + j.expires_in*1000;
+    await kvSet('spotify_token', { access: this.token, refresh: this.refresh, expiresAt: this.expiresAt });
+  },
+  async _refreshToken(){
+    const body = new URLSearchParams({
+      grant_type: 'refresh_token',
+      refresh_token: this.refresh,
+      client_id: SPOTIFY_CLIENT_ID,
+    });
+    const r = await fetch('https://accounts.spotify.com/api/token', {
+      method:'POST',
+      headers:{ 'Content-Type':'application/x-www-form-urlencoded' },
+      body
+    });
+    if (!r.ok) throw new Error('refresh failed: '+r.status);
+    const j = await r.json();
+    this.token = j.access_token;
+    if (j.refresh_token) this.refresh = j.refresh_token;
+    this.expiresAt = Date.now() + j.expires_in*1000;
+    await kvSet('spotify_token', { access: this.token, refresh: this.refresh, expiresAt: this.expiresAt });
+  },
+  async _ensureToken(){
+    if (!this.token) return null;
+    if (Date.now() > this.expiresAt - 30_000 && this.refresh){
+      try{ await this._refreshToken(); }catch(e){ console.warn(e); }
+    }
+    return this.token;
+  },
+  async api(method, path, body=null){
+    const tok = await this._ensureToken();
+    if (!tok) throw new Error('not logged in');
+    const opt = { method, headers: { 'Authorization': 'Bearer '+tok } };
+    if (body){ opt.body = JSON.stringify(body); opt.headers['Content-Type']='application/json'; }
+    const r = await fetch('https://api.spotify.com/v1'+path, opt);
+    if (r.status === 204) return null;
+    if (!r.ok){
+      const t = await r.text().catch(()=>'(no body)');
+      throw new Error(`Spotify ${method} ${path} ${r.status}: ${t.slice(0,200)}`);
+    }
+    return r.json();
+  },
+  _loadSdk(){
+    if (document.getElementById('sdk-tag')) { this._initPlayerIfReady(); return; }
+    window.onSpotifyWebPlaybackSDKReady = () => this._initPlayer();
+    const tag = document.createElement('script');
+    tag.id = 'sdk-tag';
+    tag.src = 'https://sdk.scdn.co/spotify-player.js';
+    document.head.appendChild(tag);
+  },
+  _initPlayerIfReady(){
+    if (window.Spotify && window.Spotify.Player) this._initPlayer();
+  },
+  _initPlayer(){
+    const self = this;
+    if (this.player) return;
+    this.player = new window.Spotify.Player({
+      name: 'Dugout DJ',
+      getOAuthToken: cb => { self._ensureToken().then(t => cb(t)); },
+      volume: 1.0,
+    });
+    this.player.addListener('ready', ({device_id}) => {
+      self.deviceId = device_id;
+      self.ready = true;
+      self._updateUI();
+      toast('Spotify ready — transfer playback to start');
+      // Auto-transfer on ready
+      self.transfer().catch(()=>{});
+    });
+    this.player.addListener('not_ready', () => { self.ready = false; self._updateUI(); });
+    this.player.addListener('player_state_changed', s => { self.state = s; self._renderNowPlaying(); });
+    this.player.addListener('initialization_error', e => { console.warn(e); toast('SDK init error'); });
+    this.player.addListener('authentication_error', e => { console.warn(e); toast('Spotify auth error'); });
+    this.player.addListener('account_error', e => { console.warn(e); toast('Premium required for SDK'); });
+    this.player.connect();
+  },
+  async transfer(play=false){
+    if (!this.deviceId){ toast('Spotify player not ready'); return; }
+    await this.api('PUT', '/me/player', { device_ids:[this.deviceId], play });
+  },
+  async logout(){
+    this.token = null; this.refresh = null; this.expiresAt = 0;
+    await kvSet('spotify_token', null);
+    if (this.player){ try{ this.player.disconnect(); }catch(e){} this.player = null; }
+    this.ready = false; this._updateUI();
+    $('#nowTitle').textContent = 'Not playing';
+    $('#nowArtist').textContent = 'Connect Spotify to begin';
+    $('#nowArt').style.backgroundImage = 'none';
+  },
+  _updateUI(){
+    const sub = $('#connSub');
+    if (this.token){
+      sub.textContent = this.ready ? 'Spotify · Ready' : 'Spotify · Connecting…';
+      $('#spotifyStatus').textContent = this.ready ? 'Connected & ready.' : 'Connected — waiting for player…';
+    } else {
+      sub.textContent = 'Spotify · Not connected';
+      $('#spotifyStatus').textContent = 'Not connected.';
+    }
+    $('#redirectUri').textContent = REDIRECT_URI;
+  },
+  _renderNowPlaying(){
+    const s = this.state;
+    if (!s || !s.track_window || !s.track_window.current_track){
+      $('#nowTitle').textContent = 'Paused';
+      $('#nowArtist').textContent = '—';
+      return;
+    }
+    const t = s.track_window.current_track;
+    $('#nowTitle').textContent = t.name || '—';
+    $('#nowArtist').textContent = (t.artists||[]).map(a=>a.name).join(', ');
+    const art = (t.album && t.album.images && t.album.images[0]) ? t.album.images[0].url : '';
+    $('#nowArt').style.backgroundImage = art ? `url(${art})` : 'none';
+  },
+  async play(uris, offsetIdx=0){
+    if (!this.deviceId){ toast('No Spotify device — transfer first'); return; }
+    const body = { uris };
+    if (typeof offsetIdx === 'number') body.position_ms = 0, body.offset = { position: offsetIdx };
+    await this.api('PUT', `/me/player/play?device_id=${this.deviceId}`, body);
+  },
+  async playPlaylistFrom(playlistUri, position){
+    if (!this.deviceId){ toast('No Spotify device — transfer first'); return; }
+    const body = { context_uri: playlistUri, offset: { position }, position_ms: 0 };
+    await this.api('PUT', `/me/player/play?device_id=${this.deviceId}`, body);
+  },
+  async toggle(){
+    if (!this.player) return;
+    await this.player.togglePlay();
+  },
+  async next(){ if (this.player) await this.player.nextTrack(); },
+  async prev(){ if (this.player) await this.player.previousTrack(); },
+  async setShuffle(on){
+    try{ await this.api('PUT', `/me/player/shuffle?state=${on?'true':'false'}&device_id=${this.deviceId||''}`); }
+    catch(e){ console.warn(e); }
+  },
+  async setVolumePct(pct){
+    pct = Math.max(0, Math.min(100, Math.round(pct)));
+    try{ await this.api('PUT', `/me/player/volume?volume_percent=${pct}${this.deviceId?'&device_id='+this.deviceId:''}`); }
+    catch(e){ /* swallow — happens when no playback */ }
+  },
+  async duck(depth=0.2){
+    // remember current and lower to depth
+    const cur = (this.state && typeof this.state.volume === 'number') ? this.state.volume : 1.0;
+    this.preDuckVolume = cur;
+    await this.setVolumePct(Math.round(depth*100));
+  },
+  async unduck(){
+    await this.setVolumePct(Math.round((this.preDuckVolume??1.0)*100));
+  },
+  async fade(seconds=3){
+    if (!this.player) return;
+    const steps = 30, dur = seconds*1000/steps;
+    let v = 1.0;
+    try{ v = await this.player.getVolume(); }catch(e){ v=1.0; }
+    for (let i=0;i<steps;i++){
+      const nv = v * (1 - (i+1)/steps);
+      try{ await this.player.setVolume(Math.max(0, nv)); }catch(e){}
+      await sleep(dur);
+    }
+    try{ await this.player.pause(); }catch(e){}
+    try{ await this.player.setVolume(v); }catch(e){}
+  },
+  async stop(){
+    if (this.player){ try{ await this.player.pause(); }catch(e){} }
+  },
+  /* fetch the Softball 2026 playlist (cached) */
+  async getSoftballPlaylist(forceRefresh=false){
+    const cacheKey = 'softball_playlist_cache';
+    if (!forceRefresh){
+      const c = await kvGet(cacheKey);
+      if (c) return c;
+    }
+    // Find playlist by name in user's playlists
+    let url = `/me/playlists?limit=50`;
+    let found = null;
+    while (url){
+      const j = await this.api('GET', url);
+      const m = j.items.find(p => p.name && p.name.toLowerCase().includes('softball 2026'));
+      if (m){ found = m; break; }
+      url = j.next ? j.next.replace('https://api.spotify.com/v1','') : null;
+    }
+    if (!found) throw new Error('Playlist "Softball 2026" not found');
+    // fetch all tracks
+    const tracks = [];
+    let turl = `/playlists/${found.id}/tracks?fields=items(track(uri,name,artists(name))),next&limit=100`;
+    while (turl){
+      const j = await this.api('GET', turl);
+      for (const it of (j.items||[])){
+        if (it.track && it.track.uri && !it.track.uri.startsWith('spotify:local'))
+          tracks.push({ uri: it.track.uri, name: it.track.name, artist: (it.track.artists||[]).map(a=>a.name).join(', ') });
+      }
+      turl = j.next ? j.next.replace('https://api.spotify.com/v1','') : null;
+    }
+    const data = { id: found.id, uri: found.uri, name: found.name, tracks };
+    await kvSet(cacheKey, data);
+    return data;
+  },
+};
+
+/* ============================================================================
+   APP STATE & RENDERING
+   ============================================================================ */
+const App = {
+  tab: 'music',
+  sections: null,
+  pads: [],          // {id,label,blobId}
+  players: [],       // {id, name, num, walkupBlobId, annBlobId, mixBlobId}
+  activePlayerIdx: 0,
+  editPlayerId: null,
+  shuffle: false,
+  ttsAnnounce: false,
+  // active local sound nodes for stop-all
+  activeLocalNodes: new Set(),
+  // remember if Spotify was playing before duck for restore
+  spotifyWasPlaying: false,
+
+  async load(){
+    this.sections = (await kvGet('sections')) || DEFAULT_SECTIONS.slice();
+    this.pads = await dbAll('pads');
+    this.players = await dbAll('players');
+    this.players.sort((a,b)=> (a.order??0) - (b.order??0));
+    this.shuffle = !!(await kvGet('shuffle'));
+    this.ttsAnnounce = !!(await kvGet('ttsAnnounce'));
+    $('#chkTTS').checked = this.ttsAnnounce;
+    $('#trShuffle').classList.toggle('primary', this.shuffle);
+  },
+
+  switchTab(t){
+    this.tab = t;
+    $$('nav.tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab===t));
+    $$('section.tab').forEach(s => s.classList.toggle('active', s.id === 'tab-'+t));
+  },
+
+  /* -------- MUSIC -------- */
+  renderSections(playlist){
+    const grid = $('#sectionGrid'); grid.innerHTML = '';
+    const total = playlist ? playlist.tracks.length : 165;
+    this.sections.forEach((s, i) => {
+      const next = this.sections[i+1];
+      const end = next ? next.start-1 : total;
+      const btn = document.createElement('button');
+      btn.className = 'section-btn ' + s.themeClass;
+      btn.innerHTML = `<div class="lbl">${s.label}</div><div class="meta">Tracks ${s.start}–${end} · ${end-s.start+1} songs</div>`;
+      btn.addEventListener('click', () => this.playSection(i));
+      grid.appendChild(btn);
+    });
+  },
+  async playSection(i){
+    if (!Spotify.token){ toast('Connect Spotify first'); return; }
+    try{
+      const pl = await Spotify.getSoftballPlaylist();
+      if (this.shuffle) await Spotify.setShuffle(true);
+      else await Spotify.setShuffle(false);
+      const start = this.sections[i].start - 1; // 0-based
+      await Spotify.playPlaylistFrom(pl.uri, start);
+      toast('▶︎ ' + this.sections[i].label);
+    }catch(e){ console.error(e); toast('Playback failed — '+e.message); }
+  },
+
+  /* -------- SOUNDS -------- */
+  renderPads(){
+    const grid = $('#padGrid'); grid.innerHTML = '';
+    this.pads.forEach(p => grid.appendChild(this.padEl(p)));
+    // empty placeholder if none
+    if (!this.pads.length){
+      const ph = document.createElement('div'); ph.className='pad empty';
+      ph.innerHTML = `<div class="pad-label">No pads yet</div><div class="muted" style="font-size:11px">Tap + Add pad</div>`;
+      grid.appendChild(ph);
+    }
+  },
+  padEl(p){
+    const div = document.createElement('button');
+    div.className = 'pad'; div.dataset.id = p.id;
+    div.innerHTML = `
+      <span class="pad-edit" data-edit="1">✎</span>
+      <div class="pad-label">${escapeHtml(p.label || 'Pad')}</div>
+      <div class="muted" style="font-size:10px">${p.blobId? 'Tap to play':'No clip'}</div>
+    `;
+    div.addEventListener('click', (e) => {
+      if (e.target.dataset.edit){ this.editPad(p.id); return; }
+      this.playPad(p.id, div);
+    });
+    return div;
+  },
+  async editPad(id){
+    const p = this.pads.find(x=>x.id===id);
+    if (!p) return;
+    const label = prompt('Pad label:', p.label || '');
+    if (label === null) return;
+    p.label = label || 'Pad';
+    const want = confirm('Replace audio file? OK to choose new, Cancel to keep.');
+    if (want){
+      const f = await pickFile('audio/*');
+      if (f){
+        if (p.blobId) await blobDel(p.blobId);
+        p.blobId = uuid();
+        await blobPut(p.blobId, f);
+      }
+    }
+    await dbPut('pads', p);
+    this.renderPads();
+  },
+  async addPad(){
+    const label = prompt('Pad label (e.g. "Air horn"):', 'Pad ' + (this.pads.length+1));
+    if (!label) return;
+    const f = await pickFile('audio/*');
+    if (!f){ toast('No file selected'); return; }
+    const blobId = uuid();
+    await blobPut(blobId, f);
+    const pad = { id: uuid(), label, blobId, created: Date.now() };
+    await dbPut('pads', pad);
+    this.pads.push(pad);
+    this.renderPads();
+  },
+  async playPad(id, el){
+    const pad = this.pads.find(x=>x.id===id);
+    if (!pad || !pad.blobId){ toast('No clip'); return; }
+    const blob = await blobGet(pad.blobId);
+    if (!blob){ toast('Clip missing'); return; }
+    try{
+      const buf = await decodeBlob(blob);
+      await this._duckThenPlay(buf, () => {
+        if (el) el.classList.add('playing');
+      }, () => {
+        if (el) el.classList.remove('playing');
+      });
+    }catch(e){ console.error(e); toast('Play failed'); }
+  },
+  async _duckThenPlay(buf, onStart, onEnd){
+    const ctx = audio();
+    const src = ctx.createBufferSource(); src.buffer = buf;
+    const g = ctx.createGain(); g.gain.value = 1;
+    src.connect(g); g.connect(getLocalBus());
+    let ducked = false;
+    if (Spotify.ready){
+      try{ await Spotify.duck(0.18); ducked = true; }catch(e){}
+    }
+    onStart && onStart();
+    this.activeLocalNodes.add(src);
+    src.start();
+    src.onended = async () => {
+      this.activeLocalNodes.delete(src);
+      try{ src.disconnect(); g.disconnect(); }catch(e){}
+      if (ducked){ try{ await Spotify.unduck(); }catch(e){} }
+      onEnd && onEnd();
+    };
+  },
+
+  /* -------- LINEUP -------- */
+  renderLineup(){
+    const list = $('#lineupList'); list.innerHTML = '';
+    if (!this.players.length){
+      const empty = document.createElement('div');
+      empty.className = 'card muted';
+      empty.textContent = 'No players yet. Tap "+ Player" to build your lineup.';
+      list.appendChild(empty);
+      return;
+    }
+    this.players.forEach((p, idx) => {
+      const div = document.createElement('div');
+      div.className = 'player' + (idx===this.activePlayerIdx ? ' active' : '');
+      const bMix  = p.mixBlobId ? '<span class="badge ok">mix</span>' : '';
+      const bWalk = p.walkupBlobId ? '<span class="badge ok">walk</span>' : '<span class="badge missing">walk</span>';
+      const bAnn  = p.annBlobId ? '<span class="badge ok">ann</span>' : '<span class="badge warn">ann?</span>';
+      div.innerHTML = `
+        <div class="jersey">${escapeHtml(p.num || '#')}</div>
+        <div>
+          <div class="name">${escapeHtml(p.name || 'Player')}</div>
+          <div class="meta">${bWalk} ${bAnn} ${bMix}</div>
+        </div>
+        <div class="actions">
+          <button class="btn small primary" data-play>▶︎ Play</button>
+          <button class="btn small ghost" data-edit>Edit</button>
+        </div>
+      `;
+      div.querySelector('[data-play]').addEventListener('click', () => this.playPlayer(idx));
+      div.querySelector('[data-edit]').addEventListener('click', () => this.openPlayerEditor(p.id));
+      list.appendChild(div);
+    });
+  },
+  async addPlayer(){
+    const p = { id: uuid(), name: 'Player', num: '00', order: this.players.length };
+    this.players.push(p); await dbPut('players', p);
+    this.renderLineup();
+    this.openPlayerEditor(p.id);
+  },
+  openPlayerEditor(id){
+    const p = this.players.find(x=>x.id===id); if (!p) return;
+    this.editPlayerId = id;
+    $('#pName').value = p.name||'';
+    $('#pNum').value  = p.num||'';
+    $('#bWalk').textContent = p.walkupBlobId ? 'ready' : 'missing';
+    $('#bWalk').className = 'badge ' + (p.walkupBlobId ? 'ok' : 'missing');
+    $('#bAnn').textContent = p.annBlobId ? 'ready' : 'missing';
+    $('#bAnn').className = 'badge ' + (p.annBlobId ? 'ok' : 'warn');
+    $('#bMix').textContent = p.mixBlobId ? 'ready' : 'missing';
+    $('#bMix').className = 'badge ' + (p.mixBlobId ? 'ok' : 'missing');
+    $('#playerModalTitle').textContent = (p.name||'Player') + ' #' + (p.num||'');
+    $('#modalPlayer').classList.add('open');
+  },
+  async savePlayerEdits(){
+    const p = this.players.find(x=>x.id===this.editPlayerId); if (!p) return;
+    p.name = $('#pName').value.trim() || 'Player';
+    p.num  = $('#pNum').value.trim() || '';
+    await dbPut('players', p);
+    this.renderLineup();
+    $('#modalPlayer').classList.remove('open');
+  },
+  async deletePlayer(){
+    const p = this.players.find(x=>x.id===this.editPlayerId); if (!p) return;
+    if (!confirm('Delete '+(p.name||'this player')+'?')) return;
+    for (const k of ['walkupBlobId','annBlobId','mixBlobId']) if (p[k]) await blobDel(p[k]);
+    await dbDel('players', p.id);
+    this.players = this.players.filter(x=>x.id!==p.id);
+    this.renderLineup();
+    $('#modalPlayer').classList.remove('open');
+  },
+  async playPlayer(idx){
+    const p = this.players[idx]; if (!p) return;
+    this.activePlayerIdx = idx; this.renderLineup();
+    // 1. If a rendered mix exists, play that single file.
+    if (p.mixBlobId){
+      const blob = await blobGet(p.mixBlobId);
+      if (blob){
+        await this._stopAllLocal();
+        if (Spotify.ready){ try{ await Spotify.stop(); }catch(e){} }
+        const buf = await decodeBlob(blob);
+        const ctx = audio();
+        const src = ctx.createBufferSource(); src.buffer = buf;
+        src.connect(getLocalBus()); this.activeLocalNodes.add(src); src.start();
+        src.onended = ()=> this.activeLocalNodes.delete(src);
+        return;
+      }
+    }
+    // 2. Otherwise live duck: pause spotify temporarily, play announcement (or TTS),
+    //    then walk-up song.
+    if (Spotify.ready) { try{ await Spotify.stop(); }catch(e){} }
+    let annBlob = p.annBlobId ? await blobGet(p.annBlobId) : null;
+    if (annBlob){
+      const buf = await decodeBlob(annBlob);
+      await this._playAndWait(buf);
+    } else if (this.ttsAnnounce){
+      await this._speak(`Now batting, number ${p.num||''}, ${p.name||'Player'}`);
+    }
+    if (p.walkupBlobId){
+      const wbuf = await decodeBlob(await blobGet(p.walkupBlobId));
+      const ctx = audio();
+      const src = ctx.createBufferSource(); src.buffer = wbuf;
+      src.connect(getLocalBus()); this.activeLocalNodes.add(src); src.start();
+      src.onended = ()=> this.activeLocalNodes.delete(src);
+    }
+  },
+  async nextBatter(){
+    if (!this.players.length) return;
+    this.activePlayerIdx = (this.activePlayerIdx + 1) % this.players.length;
+    await this.playPlayer(this.activePlayerIdx);
+  },
+  _playAndWait(buf){
+    return new Promise(resolve => {
+      const ctx = audio();
+      const src = ctx.createBufferSource(); src.buffer = buf;
+      src.connect(getLocalBus()); this.activeLocalNodes.add(src); src.start();
+      src.onended = () => { this.activeLocalNodes.delete(src); resolve(); };
+    });
+  },
+  _speak(text){
+    return new Promise(resolve => {
+      try{
+        const u = new SpeechSynthesisUtterance(text);
+        u.rate = 0.95; u.pitch = 0.9; u.onend = () => resolve();
+        speechSynthesis.cancel(); speechSynthesis.speak(u);
+      }catch(e){ resolve(); }
+    });
+  },
+  async _stopAllLocal(){
+    for (const n of Array.from(this.activeLocalNodes)){
+      try{ n.stop(); }catch(e){}
+    }
+    this.activeLocalNodes.clear();
+    try{ speechSynthesis.cancel(); }catch(e){}
+  },
+  async stopAll(){
+    await this._stopAllLocal();
+    if (Spotify.ready){ try{ await Spotify.stop(); }catch(e){} }
+  }
+};
+
+function escapeHtml(s){ return String(s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c])); }
+function pickFile(accept='*/*'){
+  return new Promise(resolve => {
+    const inp = document.createElement('input');
+    inp.type = 'file'; inp.accept = accept;
+    inp.onchange = () => resolve(inp.files && inp.files[0]);
+    inp.click();
+  });
+}
+
+/* ============================================================================
+   MIXER — v1.5
+   ============================================================================ */
+const Mixer = {
+  playerId: null,
+  song: null,           // AudioBuffer
+  ann: null,            // AudioBuffer
+  songBlob: null, annBlob: null,
+  annStart: 1.0,        // seconds — when announcement enters
+  mode: 'auto',
+  params: { depth:0.20, rdown:0.5, rup:1.0, avol:1.0 },
+  manualPoints: null,   // array of {t,v} for advanced mode (over song duration)
+  previewNodes: { song:null, ann:null, gSong:null, gAnn:null, startedAt:0 },
+  canvas: null, ctx: null,
+  // canvas geometry cache
+  geom: { w:0, h:0, dur:0 },
+  dragTarget: null,     // 'ann' | {kind:'pt', idx:n} | null
+
+  async open(playerId){
+    this.playerId = playerId;
+    const p = App.players.find(x=>x.id===playerId);
+    $('#mixerSubtitle').textContent = (p?.name||'') + ' #' + (p?.num||'');
+    $('#modalMixer').classList.add('open');
+    this.song = null; this.ann = null;
+    this.songBlob = p.walkupBlobId ? await blobGet(p.walkupBlobId) : null;
+    this.annBlob  = p.annBlobId    ? await blobGet(p.annBlobId)    : null;
+    if (!this.songBlob){ toast('Set a walk-up song first'); $('#modalMixer').classList.remove('open'); return; }
+    this.song = await decodeBlob(this.songBlob);
+    if (this.annBlob) this.ann = await decodeBlob(this.annBlob);
+    this.annStart = Math.min(this.song.duration * 0.2, 4); // default: ~20% in
+    this.manualPoints = null; // start clean in auto
+    this.canvas = $('#mixCanvas'); this.ctx = this.canvas.getContext('2d');
+    this._fitCanvas();
+    this._bindCanvas();
+    this._syncSliders();
+    this.draw();
+  },
+  close(){
+    this.stopPreview();
+    $('#modalMixer').classList.remove('open');
+  },
+  _fitCanvas(){
+    const dpr = window.devicePixelRatio || 1;
+    const cssW = this.canvas.clientWidth, cssH = this.canvas.clientHeight;
+    this.canvas.width = cssW * dpr; this.canvas.height = cssH * dpr;
+    this.ctx.setTransform(dpr,0,0,dpr,0,0);
+    this.geom.w = cssW; this.geom.h = cssH;
+    this.geom.dur = this.song ? this.song.duration : 0;
+  },
+  _syncSliders(){
+    $('#sDepth').value = this.params.depth; $('#lblDepth').textContent = fmt(this.params.depth);
+    $('#sRdown').value = this.params.rdown; $('#lblRdown').textContent = fmt(this.params.rdown);
+    $('#sRup').value   = this.params.rup;   $('#lblRup').textContent   = fmt(this.params.rup);
+    $('#sAvol').value  = this.params.avol;  $('#lblAvol').textContent  = fmt(this.params.avol);
+  },
+  setMode(m){
+    if (m === this.mode) return;
+    this.mode = m;
+    $$('#modeToggle button').forEach(b => b.classList.toggle('on', b.dataset.mode === m));
+    if (m === 'manual' && !this.manualPoints){
+      // initialize manualPoints from the current auto-envelope so user can refine
+      this.manualPoints = this._autoEnvelopePoints();
+    }
+    this.draw();
+  },
+  _autoEnvelopePoints(){
+    if (!this.ann) return [{t:0,v:1},{t:this.song.duration,v:1}];
+    const p = this.params;
+    const aStart = this.annStart;
+    const aEnd = this.annStart + this.ann.duration;
+    const pts = [];
+    pts.push({t: 0, v: 1});
+    pts.push({t: Math.max(0, aStart - p.rdown), v: 1});
+    pts.push({t: aStart, v: p.depth});
+    pts.push({t: aEnd, v: p.depth});
+    pts.push({t: Math.min(this.song.duration, aEnd + p.rup), v: 1});
+    pts.push({t: this.song.duration, v: 1});
+    // collapse exact duplicates by t
+    return pts.filter((pt,i,arr)=> i===0 || pt.t > arr[i-1].t);
+  },
+  envelopePoints(){
+    return this.mode==='manual' && this.manualPoints ? this.manualPoints : this._autoEnvelopePoints();
+  },
+  draw(){
+    const c = this.ctx; if (!c) return;
+    const {w,h,dur} = this.geom;
+    c.clearRect(0,0,w,h);
+
+    // sections
+    const songTop = 10, songH = (h-20)*0.55;
+    const annTop = songTop + songH + 10, annH = (h-20)*0.45 - 10;
+    // backgrounds
+    c.fillStyle = '#15191f'; c.fillRect(0, songTop, w, songH);
+    c.fillStyle = '#15191f'; c.fillRect(0, annTop, w, annH);
+    // labels
+    c.fillStyle = '#9aa4b2'; c.font='10px -apple-system, sans-serif';
+    c.fillText('SONG (' + this._mmss(dur) + ')', 6, songTop+12);
+    c.fillText('ANNOUNCEMENT' + (this.ann? ' ('+this._mmss(this.ann.duration)+')' : ' — none'), 6, annTop+12);
+
+    // waveforms
+    if (this.song) this._drawWave(this.song, 0, w, songTop+16, songH-18, '#7ee0a4');
+    if (this.ann) {
+      const xStart = (this.annStart/dur)*w;
+      const wAnn = (this.ann.duration/dur)*w;
+      // bg for the moveable region
+      c.fillStyle = 'rgba(247,168,51,0.10)'; c.fillRect(xStart, annTop+2, Math.max(2, wAnn), annH-4);
+      this._drawWave(this.ann, xStart, wAnn, annTop+16, annH-22, '#ffa833');
+      // grab handle bar
+      c.fillStyle = 'rgba(247,168,51,0.95)'; c.fillRect(xStart, annTop, 3, annH);
+      c.fillRect(xStart + wAnn - 3, annTop, 3, annH);
+    }
+
+    // envelope on song
+    const pts = this.envelopePoints();
+    c.strokeStyle = '#39c5ff'; c.lineWidth = 2; c.beginPath();
+    pts.forEach((p,i) => {
+      const x = (p.t/dur)*w;
+      const y = songTop + (1-p.v) * songH;
+      if (i===0) c.moveTo(x,y); else c.lineTo(x,y);
+    });
+    c.stroke();
+    if (this.mode==='manual'){
+      c.fillStyle = '#39c5ff';
+      pts.forEach(p => {
+        const x = (p.t/dur)*w, y = songTop + (1-p.v)*songH;
+        c.beginPath(); c.arc(x, y, 6, 0, Math.PI*2); c.fill();
+      });
+    }
+  },
+  _drawWave(buf, x, w, y, h, color){
+    const ctx = this.ctx;
+    const data = buf.getChannelData(0);
+    const step = Math.max(1, Math.floor(data.length / Math.max(1, Math.floor(w))));
+    ctx.strokeStyle = color; ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let i=0; i < w; i++){
+      let min=1, max=-1;
+      const s = i*step, e = Math.min(data.length, s+step);
+      for (let j=s; j<e; j++){ const v = data[j]; if (v<min) min=v; if (v>max) max=v; }
+      const yMin = y + h*(1 - (min*0.5+0.5));
+      const yMax = y + h*(1 - (max*0.5+0.5));
+      ctx.moveTo(x+i, yMin); ctx.lineTo(x+i, yMax);
+    }
+    ctx.stroke();
+  },
+  _mmss(s){ s = Math.max(0,s); const m = Math.floor(s/60); const ss = Math.floor(s%60); return `${m}:${ss<10?'0':''}${ss}`; },
+
+  _bindCanvas(){
+    if (this._bound) return; this._bound = true;
+    const c = this.canvas;
+    const getPt = (ev) => {
+      const r = c.getBoundingClientRect();
+      const x = (ev.touches? ev.touches[0].clientX : ev.clientX) - r.left;
+      const y = (ev.touches? ev.touches[0].clientY : ev.clientY) - r.top;
+      return { x, y };
+    };
+    const hitTest = (x,y) => {
+      const {w,h,dur} = this.geom;
+      const songTop = 10, songH = (h-20)*0.55;
+      const annTop = songTop + songH + 10, annH = (h-20)*0.45 - 10;
+      // ann region first
+      if (this.ann && y >= annTop && y <= annTop+annH){
+        const xStart = (this.annStart/dur)*w;
+        const wAnn = (this.ann.duration/dur)*w;
+        if (x >= xStart && x <= xStart + wAnn) return { kind:'ann', offset: x - xStart };
+      }
+      // env points (manual mode)
+      if (this.mode==='manual'){
+        const pts = this.envelopePoints();
+        for (let i=0;i<pts.length;i++){
+          const px = (pts[i].t/dur)*w, py = songTop + (1-pts[i].v)*songH;
+          if ((px-x)*(px-x) + (py-y)*(py-y) < 14*14) return { kind:'pt', idx:i };
+        }
+        // empty area in song region -> create a new point
+        if (y >= songTop && y <= songTop + songH){
+          const t = Math.max(0, Math.min(dur, (x/w)*dur));
+          const v = Math.max(0, Math.min(1, 1 - (y - songTop)/songH));
+          const ip = this.manualPoints.findIndex(p => p.t > t);
+          const idx = ip < 0 ? this.manualPoints.length : ip;
+          this.manualPoints.splice(idx, 0, { t, v });
+          this.draw();
+          return { kind:'pt', idx };
+        }
+      }
+      return null;
+    };
+    const onDown = (ev) => {
+      ev.preventDefault();
+      const {x,y} = getPt(ev);
+      this.dragTarget = hitTest(x,y);
+      // double-tap to delete in manual
+      if (this.dragTarget && this.dragTarget.kind==='pt' && this.mode==='manual'){
+        const now = Date.now();
+        if (this._lastTap && (now - this._lastTap) < 280 && this._lastTapIdx === this.dragTarget.idx){
+          // remove (but keep endpoints)
+          const i = this.dragTarget.idx;
+          if (i>0 && i<this.manualPoints.length-1){ this.manualPoints.splice(i,1); this.dragTarget=null; this.draw(); return; }
+        }
+        this._lastTap = now; this._lastTapIdx = this.dragTarget.idx;
+      }
+    };
+    const onMove = (ev) => {
+      if (!this.dragTarget) return;
+      ev.preventDefault();
+      const {x,y} = getPt(ev);
+      const {w,h,dur} = this.geom;
+      const songTop = 10, songH = (h-20)*0.55;
+      if (this.dragTarget.kind === 'ann'){
+        const xStart = Math.max(0, Math.min(w - (this.ann.duration/dur)*w, x - (this.dragTarget.offset||0)));
+        this.annStart = Math.max(0, Math.min(dur - this.ann.duration, (xStart/w)*dur));
+      } else if (this.dragTarget.kind === 'pt'){
+        const i = this.dragTarget.idx;
+        const pts = this.manualPoints;
+        const t = Math.max(0, Math.min(dur, (x/w)*dur));
+        const v = Math.max(0, Math.min(1, 1 - (y - songTop)/songH));
+        // clamp endpoints to ends; keep order
+        if (i === 0) pts[i] = { t: 0, v };
+        else if (i === pts.length-1) pts[i] = { t: dur, v };
+        else {
+          const lo = pts[i-1].t + 0.001, hi = pts[i+1].t - 0.001;
+          pts[i] = { t: Math.min(hi, Math.max(lo, t)), v };
+        }
+      }
+      this.draw();
+    };
+    const onUp = () => { this.dragTarget = null; };
+    c.addEventListener('mousedown', onDown);
+    c.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    c.addEventListener('touchstart', onDown, { passive:false });
+    c.addEventListener('touchmove', onMove, { passive:false });
+    window.addEventListener('touchend', onUp);
+    window.addEventListener('resize', () => { this._fitCanvas(); this.draw(); });
+  },
+
+  /* preview: schedule via gain ramps */
+  _scheduleEnvelopeOnGain(gain, ctx, startAt){
+    const pts = this.envelopePoints();
+    gain.gain.cancelScheduledValues(0);
+    gain.gain.setValueAtTime(pts[0].v, startAt);
+    for (let i=1; i<pts.length; i++){
+      gain.gain.linearRampToValueAtTime(pts[i].v, startAt + pts[i].t);
+    }
+  },
+  async preview(){
+    this.stopPreview();
+    const ctx = audio();
+    const t0 = ctx.currentTime + 0.05;
+    const songSrc = ctx.createBufferSource(); songSrc.buffer = this.song;
+    const gSong = ctx.createGain();
+    songSrc.connect(gSong); gSong.connect(getLocalBus());
+    this._scheduleEnvelopeOnGain(gSong, ctx, t0);
+    songSrc.start(t0);
+    let annSrc = null, gAnn = null;
+    if (this.ann){
+      annSrc = ctx.createBufferSource(); annSrc.buffer = this.ann;
+      gAnn = ctx.createGain(); gAnn.gain.value = this.params.avol;
+      annSrc.connect(gAnn); gAnn.connect(getLocalBus());
+      annSrc.start(t0 + this.annStart);
+    }
+    this.previewNodes = { song: songSrc, ann: annSrc, gSong, gAnn, startedAt: t0 };
+    songSrc.onended = () => { if (this.previewNodes.song===songSrc) this.previewNodes.song = null; };
+  },
+  stopPreview(){
+    try{ this.previewNodes.song && this.previewNodes.song.stop(); }catch(e){}
+    try{ this.previewNodes.ann  && this.previewNodes.ann.stop(); }catch(e){}
+    this.previewNodes = { song:null, ann:null, gSong:null, gAnn:null, startedAt:0 };
+  },
+
+  /* render offline & save as WAV */
+  async saveMix(){
+    if (!this.song){ toast('No song'); return; }
+    toast('Rendering mix…');
+    const dur = this.song.duration; // mix length = song length (announcement clipped if exceeds)
+    const sr = 44100, ch = 2;
+    const offline = new (window.OfflineAudioContext || window.webkitOfflineAudioContext)(ch, Math.ceil(dur*sr), sr);
+    const songSrc = offline.createBufferSource(); songSrc.buffer = this.song;
+    const gSong = offline.createGain();
+    songSrc.connect(gSong); gSong.connect(offline.destination);
+    // schedule envelope
+    const pts = this.envelopePoints();
+    gSong.gain.setValueAtTime(pts[0].v, 0);
+    for (let i=1;i<pts.length;i++) gSong.gain.linearRampToValueAtTime(pts[i].v, pts[i].t);
+    songSrc.start(0);
+    if (this.ann){
+      const annSrc = offline.createBufferSource(); annSrc.buffer = this.ann;
+      const gAnn = offline.createGain(); gAnn.gain.value = this.params.avol;
+      annSrc.connect(gAnn); gAnn.connect(offline.destination);
+      annSrc.start(this.annStart);
+    }
+    const rendered = await offline.startRendering();
+    const wav = encodeWav(rendered);
+    const blob = new Blob([wav], { type: 'audio/wav' });
+    const p = App.players.find(x=>x.id===this.playerId);
+    if (p.mixBlobId) await blobDel(p.mixBlobId);
+    p.mixBlobId = uuid();
+    await blobPut(p.mixBlobId, blob);
+    await dbPut('players', p);
+    App.renderLineup();
+    toast('Mix saved');
+    this.close();
+  }
+};
+
+/* ---------- Minimal 16-bit PCM WAV encoder ---------- */
+function encodeWav(audioBuffer){
+  const numCh = audioBuffer.numberOfChannels;
+  const sr = audioBuffer.sampleRate;
+  const length = audioBuffer.length;
+  // interleave
+  const inter = new Float32Array(length * numCh);
+  for (let c=0; c<numCh; c++){
+    const data = audioBuffer.getChannelData(c);
+    for (let i=0; i<length; i++) inter[i*numCh + c] = data[i];
+  }
+  const bytesPerSample = 2;
+  const blockAlign = numCh * bytesPerSample;
+  const byteRate = sr * blockAlign;
+  const dataSize = inter.length * bytesPerSample;
+  const buf = new ArrayBuffer(44 + dataSize);
+  const v = new DataView(buf);
+  let o = 0;
+  function ws(str){ for (let i=0;i<str.length;i++) v.setUint8(o++, str.charCodeAt(i)); }
+  ws('RIFF'); v.setUint32(o, 36 + dataSize, true); o+=4;
+  ws('WAVE'); ws('fmt ');
+  v.setUint32(o, 16, true); o+=4;        // PCM chunk size
+  v.setUint16(o, 1, true);  o+=2;        // PCM
+  v.setUint16(o, numCh, true); o+=2;
+  v.setUint32(o, sr, true); o+=4;
+  v.setUint32(o, byteRate, true); o+=4;
+  v.setUint16(o, blockAlign, true); o+=2;
+  v.setUint16(o, 16, true); o+=2;
+  ws('data'); v.setUint32(o, dataSize, true); o+=4;
+  // PCM16 samples
+  for (let i=0; i<inter.length; i++){
+    let s = Math.max(-1, Math.min(1, inter[i]));
+    s = s < 0 ? s*0x8000 : s*0x7FFF;
+    v.setInt16(o, s, true); o += 2;
+  }
+  return buf;
+}
+
+/* ============================================================================
+   ADMIN UI — sections editor, wipe, etc.
+   ============================================================================ */
+function renderSectionsEditor(){
+  const wrap = $('#sectionsEditor'); wrap.innerHTML = '';
+  App.sections.forEach((s, idx) => {
+    const row = document.createElement('div');
+    row.className = 'row'; row.style.gap = '8px'; row.style.marginBottom='6px';
+    row.innerHTML = `
+      <input type="text" value="${escapeHtml(s.label)}" data-k="label" style="flex:2">
+      <input type="number" value="${s.start}" data-k="start" style="flex:1; max-width: 90px">
+    `;
+    row.querySelectorAll('input').forEach(inp => {
+      inp.addEventListener('change', () => {
+        const k = inp.dataset.k;
+        App.sections[idx][k] = k==='start' ? parseInt(inp.value,10) || 1 : inp.value;
+      });
+    });
+    wrap.appendChild(row);
+  });
+}
+async function wipeAll(){
+  if (!confirm('Wipe all local data (pads, lineup, mix files, Spotify token)? This cannot be undone.')) return;
+  await new Promise(res => { const r = indexedDB.deleteDatabase(DB_NAME); r.onsuccess = r.onerror = r.onblocked = () => res(); });
+  location.reload();
+}
+
+/* ============================================================================
+   WIRE UI
+   ============================================================================ */
+window.addEventListener('DOMContentLoaded', async () => {
+  await openDB();
+  await App.load();
+  App.renderPads();
+  App.renderLineup();
+
+  // tabs
+  $$('nav.tabs button').forEach(b => b.addEventListener('click', () => App.switchTab(b.dataset.tab)));
+
+  // music transport
+  $('#trPlay').addEventListener('click', () => Spotify.toggle());
+  $('#trNext').addEventListener('click', () => Spotify.next());
+  $('#trPrev').addEventListener('click', () => Spotify.prev());
+  $('#trShuffle').addEventListener('click', async () => {
+    App.shuffle = !App.shuffle;
+    await kvSet('shuffle', App.shuffle);
+    $('#trShuffle').classList.toggle('primary', App.shuffle);
+    try{ await Spotify.setShuffle(App.shuffle); }catch(e){}
+    toast(App.shuffle ? 'Shuffle on' : 'Shuffle off');
+  });
+  $('#btnRefreshPlaylist').addEventListener('click', async () => {
+    if (!Spotify.token){ toast('Connect Spotify first'); return; }
+    toast('Reloading playlist…');
+    try{
+      const pl = await Spotify.getSoftballPlaylist(true);
+      App.renderSections(pl);
+      toast('Playlist loaded · ' + pl.tracks.length + ' tracks');
+    }catch(e){ console.error(e); toast(e.message); }
+  });
+
+  // admin
+  $('#btnAdmin').addEventListener('click', () => { renderSectionsEditor(); $('#modalAdmin').classList.add('open'); });
+  $('#adminClose').addEventListener('click', () => $('#modalAdmin').classList.remove('open'));
+  $('#btnSpotifyLogin').addEventListener('click', () => Spotify.login());
+  $('#btnSpotifyLogout').addEventListener('click', () => Spotify.logout());
+  $('#btnTransfer').addEventListener('click', () => Spotify.transfer(false).then(()=>toast('Transferred')));
+  $('#btnAuth').addEventListener('click', () => Spotify.token ? toast('Connected') : Spotify.login());
+  $('#btnSaveSections').addEventListener('click', async () => {
+    App.sections.sort((a,b)=>a.start-b.start);
+    await kvSet('sections', App.sections);
+    App.renderSections();
+    toast('Sections saved');
+  });
+  $('#btnResetSections').addEventListener('click', async () => {
+    App.sections = DEFAULT_SECTIONS.slice();
+    await kvSet('sections', App.sections);
+    renderSectionsEditor(); App.renderSections();
+  });
+  $('#btnWipe').addEventListener('click', wipeAll);
+
+  // sounds
+  $('#btnAddPad').addEventListener('click', () => App.addPad());
+
+  // lineup
+  $('#btnAddPlayer').addEventListener('click', () => App.addPlayer());
+  $('#btnNextBatter').addEventListener('click', () => App.nextBatter());
+  $('#chkTTS').addEventListener('change', async (e) => { App.ttsAnnounce = e.target.checked; await kvSet('ttsAnnounce', App.ttsAnnounce); });
+
+  // player modal
+  $('#playerClose').addEventListener('click', () => $('#modalPlayer').classList.remove('open'));
+  $('#btnSavePlayer').addEventListener('click', () => App.savePlayerEdits());
+  $('#btnDeletePlayer').addEventListener('click', () => App.deletePlayer());
+  $('#btnPickWalk').addEventListener('click', async () => {
+    const f = await pickFile('audio/*'); if (!f) return;
+    const p = App.players.find(x=>x.id===App.editPlayerId);
+    if (p.walkupBlobId) await blobDel(p.walkupBlobId);
+    p.walkupBlobId = uuid();
+    await blobPut(p.walkupBlobId, f); await dbPut('players', p);
+    $('#bWalk').textContent = 'ready'; $('#bWalk').className='badge ok';
+    toast('Walk-up saved');
+  });
+  $('#btnPickAnn').addEventListener('click', async () => {
+    const f = await pickFile('audio/*'); if (!f) return;
+    const p = App.players.find(x=>x.id===App.editPlayerId);
+    if (p.annBlobId) await blobDel(p.annBlobId);
+    p.annBlobId = uuid();
+    await blobPut(p.annBlobId, f); await dbPut('players', p);
+    $('#bAnn').textContent = 'ready'; $('#bAnn').className='badge ok';
+    toast('Announcement saved');
+  });
+  $('#btnPlayWalk').addEventListener('click', async () => {
+    const p = App.players.find(x=>x.id===App.editPlayerId);
+    if (!p?.walkupBlobId) return toast('No file');
+    const buf = await decodeBlob(await blobGet(p.walkupBlobId));
+    const ctx = audio(); const src = ctx.createBufferSource(); src.buffer=buf;
+    src.connect(getLocalBus()); App.activeLocalNodes.add(src); src.start();
+    src.onended = ()=> App.activeLocalNodes.delete(src);
+  });
+  $('#btnPlayAnn').addEventListener('click', async () => {
+    const p = App.players.find(x=>x.id===App.editPlayerId);
+    if (!p?.annBlobId) return toast('No file');
+    const buf = await decodeBlob(await blobGet(p.annBlobId));
+    const ctx = audio(); const src = ctx.createBufferSource(); src.buffer=buf;
+    src.connect(getLocalBus()); App.activeLocalNodes.add(src); src.start();
+    src.onended = ()=> App.activeLocalNodes.delete(src);
+  });
+  $('#btnPlayMix').addEventListener('click', async () => {
+    const p = App.players.find(x=>x.id===App.editPlayerId);
+    if (!p?.mixBlobId) return toast('No mix yet');
+    const buf = await decodeBlob(await blobGet(p.mixBlobId));
+    const ctx = audio(); const src = ctx.createBufferSource(); src.buffer=buf;
+    src.connect(getLocalBus()); App.activeLocalNodes.add(src); src.start();
+    src.onended = ()=> App.activeLocalNodes.delete(src);
+  });
+  $('#btnClearWalk').addEventListener('click', async () => {
+    const p = App.players.find(x=>x.id===App.editPlayerId);
+    if (p.walkupBlobId){ await blobDel(p.walkupBlobId); p.walkupBlobId=null; await dbPut('players',p); }
+    $('#bWalk').textContent='missing'; $('#bWalk').className='badge missing';
+  });
+  $('#btnClearAnn').addEventListener('click', async () => {
+    const p = App.players.find(x=>x.id===App.editPlayerId);
+    if (p.annBlobId){ await blobDel(p.annBlobId); p.annBlobId=null; await dbPut('players',p); }
+    $('#bAnn').textContent='missing'; $('#bAnn').className='badge missing';
+  });
+  $('#btnClearMix').addEventListener('click', async () => {
+    const p = App.players.find(x=>x.id===App.editPlayerId);
+    if (p.mixBlobId){ await blobDel(p.mixBlobId); p.mixBlobId=null; await dbPut('players',p); }
+    $('#bMix').textContent='missing'; $('#bMix').className='badge missing';
+    App.renderLineup();
+  });
+  $('#btnOpenMixer').addEventListener('click', () => Mixer.open(App.editPlayerId));
+
+  // mixer modal
+  $('#mixerClose').addEventListener('click', () => Mixer.close());
+  $$('#modeToggle button').forEach(b => b.addEventListener('click', () => Mixer.setMode(b.dataset.mode)));
+  for (const [id,k] of [['#sDepth','depth'],['#sRdown','rdown'],['#sRup','rup'],['#sAvol','avol']]){
+    $(id).addEventListener('input', e => {
+      Mixer.params[k] = parseFloat(e.target.value);
+      $('#lblDepth').textContent = fmt(Mixer.params.depth);
+      $('#lblRdown').textContent = fmt(Mixer.params.rdown);
+      $('#lblRup').textContent   = fmt(Mixer.params.rup);
+      $('#lblAvol').textContent  = fmt(Mixer.params.avol);
+      // if user moves sliders we recompute auto envelope
+      if (Mixer.mode === 'auto'){ Mixer.draw(); }
+    });
+  }
+  $('#btnPreviewMix').addEventListener('click', () => Mixer.preview());
+  $('#btnStopPreviewMix').addEventListener('click', () => Mixer.stopPreview());
+  $('#btnSaveMix').addEventListener('click', () => Mixer.saveMix());
+
+  // master bar
+  $('#masterStop').addEventListener('click', () => App.stopAll());
+  $('#masterFade').addEventListener('click', () => Spotify.fade(3));
+  $('#masterVol').addEventListener('input', async (e) => {
+    const v = parseInt(e.target.value,10);
+    $('#volLabel').textContent = v + '%';
+    // local bus volume (the Spotify endpoint also called for consistency)
+    if (localBus) localBus.gain.value = v/100;
+    if (Spotify.ready){ try{ await Spotify.setVolumePct(v); }catch(e){} }
+  });
+
+  // initial sections render with default count (will re-render after fetch)
+  App.renderSections();
+
+  // start Spotify (handles auth callback if returning from login)
+  await Spotify.init();
+
+  // auto-load playlist if logged in
+  if (Spotify.token){
+    try{
+      const pl = await Spotify.getSoftballPlaylist();
+      App.renderSections(pl);
+    }catch(e){ /* may simply not be loaded yet */ }
+  }
+});
+</script>
+</body>
+</html>
