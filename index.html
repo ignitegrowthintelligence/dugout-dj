@@ -2022,7 +2022,31 @@ function encodeWav(audioBuffer){
 
 /* ============================================================================
    ADMIN UI — sections editor, wipe, etc.
-   ===
+   ========================================================================= */
+function renderSectionsEditor(){
+  const wrap = $('#sectionsEditor'); wrap.innerHTML = '';
+  App.sections.forEach((s, idx) => {
+    const row = document.createElement('div');
+    row.className = 'row'; row.style.gap = '8px'; row.style.marginBottom='6px';
+    row.innerHTML = `
+      <input type="text" value="${escapeHtml(s.label)}" data-k="label" style="flex:2">
+      <input type="number" value="${s.start}" data-k="start" style="flex:1; max-width: 90px">
+    `;
+    row.querySelectorAll('input').forEach(inp => {
+      inp.addEventListener('change', () => {
+        const k = inp.dataset.k;
+        App.sections[idx][k] = k==='start' ? parseInt(inp.value,10) || 1 : inp.value;
+      });
+    });
+    wrap.appendChild(row);
+  });
+}
+async function wipeAll(){
+  if (!confirm('Wipe all local data (pads, lineup, mix files, Spotify token)? This cannot be undone.')) return;
+  await new Promise(res => { const r = indexedDB.deleteDatabase(DB_NAME); r.onsuccess = r.onerror = r.onblocked = () => res(); });
+  location.reload();
+}
+
 /* ============================================================================
    CLOUD — Supabase: Google sign-in + cross-device sync (v2)
    ============================================================================ */
