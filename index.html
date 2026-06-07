@@ -1448,53 +1448,71 @@ const App = {
       list.appendChild(div);
     });
   },
-  /* v3: press-hold-slide reorder via the ≡ handle */
+  /* v3.5: press-hold-slide reorder — transform-based so the pointer stream
+     survives on both touch and mouse (no DOM reparenting mid-gesture) */
   _bindDrag(card){
     const handle = card.querySelector('[data-drag]');
     const self = this;
-    let dragging = false;
     handle.addEventListener('pointerdown', (e) => {
       e.preventDefault();
-      dragging = true;
-      card.classList.add('dragging');
-      try{ handle.setPointerCapture(e.pointerId); }catch(err){}
-    });
-    handle.addEventListener('pointermove', (e) => {
-      if (!dragging) return;
-      e.preventDefault();
       const list = $('#lineupList');
-      const y = e.clientY;
       const cards = Array.from(list.querySelectorAll('.player'));
-      for (const other of cards){
-        if (other === card) continue;
-        const r = other.getBoundingClientRect();
-        if (y > r.top && y < r.bottom){
-          const mid = r.top + r.height/2;
-          if (y < mid) list.insertBefore(card, other);
-          else list.insertBefore(card, other.nextSibling);
-          break;
+      const startIdx = cards.indexOf(card);
+      if (startIdx < 0) return;
+      const rects = cards.map(c => c.getBoundingClientRect());
+      const startY = e.clientY;
+      const slotH = rects[startIdx].height + 10; // card height + grid gap
+      let targetIdx = startIdx;
+      card.classList.add('dragging');
+      card.style.transition = 'none';
+      const onMove = (ev) => {
+        ev.preventDefault();
+        const dy = ev.clientY - startY;
+        card.style.transform = `translateY(${dy}px) scale(1.02)`;
+        const centerY = rects[startIdx].top + rects[startIdx].height/2 + dy;
+        let t = startIdx;
+        for (let i = 0; i < rects.length; i++){
+          if (i === startIdx) continue;
+          const mid = rects[i].top + rects[i].height/2;
+          if (i < startIdx && centerY < mid) t = Math.min(t, i);
+          if (i > startIdx && centerY > mid) t = Math.max(t, i);
         }
-      }
+        if (t !== targetIdx){
+          targetIdx = t;
+          cards.forEach((c, i) => {
+            if (c === card) return;
+            let shift = 0;
+            if (startIdx < targetIdx && i > startIdx && i <= targetIdx) shift = -slotH;
+            else if (startIdx > targetIdx && i >= targetIdx && i < startIdx) shift = slotH;
+            c.style.transition = 'transform .12s ease';
+            c.style.transform = shift ? `translateY(${shift}px)` : '';
+          });
+        }
+      };
+      const onUp = async () => {
+        window.removeEventListener('pointermove', onMove);
+        window.removeEventListener('pointerup', onUp);
+        window.removeEventListener('pointercancel', onUp);
+        card.classList.remove('dragging');
+        cards.forEach(c => { c.style.transform = ''; c.style.transition = ''; });
+        if (targetIdx !== startIdx) await self._applyReorder(startIdx, targetIdx);
+      };
+      window.addEventListener('pointermove', onMove, { passive: false });
+      window.addEventListener('pointerup', onUp);
+      window.addEventListener('pointercancel', onUp);
     });
-    const end = async () => {
-      if (!dragging) return;
-      dragging = false;
-      card.classList.remove('dragging');
-      await self._persistOrderFromDom();
-    };
-    handle.addEventListener('pointerup', end);
-    handle.addEventListener('pointercancel', end);
   },
-  async _persistOrderFromDom(){
-    const list = $('#lineupList');
-    const ids = Array.from(list.querySelectorAll('.player')).map(el=>el.dataset.id);
-    const activeId = (this.teamPlayers()[this.activePlayerIdx]||{}).id;
-    for (let i=0;i<ids.length;i++){
-      const p = this.players.find(x=>x.id===ids[i]);
-      if (p && p.order!==i){ p.order = i; await dbPut('players', p); }
-    }
+  async _applyReorder(from, to){
     const roster = this.teamPlayers();
-    const ai = roster.findIndex(p=>p.id===activeId);
+    const activeId = (roster[this.activePlayerIdx] || {}).id;
+    const moved = roster.splice(from, 1)[0];
+    roster.splice(to, 0, moved);
+    for (let i = 0; i < roster.length; i++){
+      const p = roster[i];
+      if (p.order !== i){ p.order = i; await dbPut('players', p); }
+    }
+    const fresh = this.teamPlayers();
+    const ai = fresh.findIndex(p => p.id === activeId);
     this.activePlayerIdx = ai < 0 ? 0 : ai;
     this.renderLineup();
     toast('Batting order updated');
