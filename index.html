@@ -60,8 +60,12 @@
   header .brand .logo {
     width: 34px; height:34px; border-radius: 10px;
     background: radial-gradient(circle at 30% 30%, #2ee066, #0d6c33 70%);
+    background-size: cover; background-position: center;
     box-shadow: 0 4px 14px rgba(46,224,102,.35);
+    flex: 0 0 auto;
   }
+  header .brand .caret { color: var(--text-dim); font-size: 11px; margin-left: 2px; }
+  header .brand:active { opacity: .8; }
   header h1 { font-size: 18px; margin:0; letter-spacing: .3px; }
   header .sub { font-size: 11px; color: var(--text-dim); }
   header .right { display:flex; gap: 8px; }
@@ -218,6 +222,31 @@
   .badge.warn { background: #3a2a0e; color: #f2c879; border-color: #5a3f15; }
   .badge.missing { background: #3a1212; color: #f48b86; border-color: #5a1f1f; }
 
+  /* ---- drag reorder (v3) ---- */
+  .player .drag-handle {
+    touch-action: none; cursor: grab; color: var(--text-dim);
+    font-size: 20px; padding: 8px 6px; user-select: none; -webkit-user-select: none;
+  }
+  .player.dragging {
+    opacity: .85; box-shadow: 0 0 0 2px var(--warn), var(--shadow);
+    transform: scale(1.02); z-index: 5; position: relative;
+  }
+
+  /* ---- teams (v3) ---- */
+  .team-row {
+    display:flex; align-items:center; gap:10px; padding:10px;
+    border:1px solid var(--line); border-radius:12px; margin-bottom:8px;
+    background: var(--surface);
+  }
+  .team-row.cur { box-shadow: 0 0 0 2px var(--accent); }
+  .team-row .tlogo {
+    width:42px; height:42px; border-radius:10px; flex:0 0 auto;
+    background: linear-gradient(135deg,#2ee066,#0d6c33);
+    background-size: cover; background-position: center;
+  }
+  .team-row .tname { flex:1; font-weight:700; min-width:0; }
+  .team-row .tmeta { font-size:11px; color: var(--text-dim); }
+
   /* ---- master bar ---- */
   .master {
     position: fixed; left: 0; right: 0; bottom: 0; z-index: 40;
@@ -314,12 +343,13 @@
 <body>
 
 <header>
-  <div class="brand">
-    <div class="logo"></div>
+  <div class="brand" id="teamSwitch" role="button" title="Switch team">
+    <div class="logo" id="teamLogo"></div>
     <div>
-      <h1>Dugout DJ</h1>
+      <h1 id="teamName">Dugout DJ</h1>
       <div class="sub" id="connSub">Game-day remote</div>
     </div>
+    <span class="caret">▾</span>
   </div>
   <div class="right">
     <button class="icon-btn" id="btnCloud" title="Account & sync">☁</button>
@@ -464,6 +494,23 @@
   </div>
 </div>
 
+<!-- ================ TEAMS MODAL (v3) ================ -->
+<div class="modal-back" id="modalTeams">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <div class="close-row">
+      <h2>Teams</h2>
+      <button class="btn small ghost" id="teamsClose">Close</button>
+    </div>
+    <div id="teamsList"></div>
+    <button class="btn block" id="btnAddTeam" style="margin-top:10px">+ New team</button>
+    <p class="muted" style="font-size:11px; margin-top:10px">
+      Tap a team to switch to it. Each team has its own name, logo and batting order.
+      Soundboard pads are shared across teams.
+    </p>
+  </div>
+</div>
+
 <!-- ================ SECTION SONGS MODAL (v2) ================ -->
 <div class="modal-back" id="modalSongs">
   <div class="modal">
@@ -548,6 +595,11 @@
       </div>
     </div>
 
+    <div class="row between" style="margin-top:10px">
+      <div class="muted" style="font-size:12px">Song clip: <strong id="lblClip" style="color:var(--accent-2)">0:00 – 0:30</strong> <span id="lblClipLen"></span></div>
+      <button class="btn small ghost" id="btnFullSong">Use full song</button>
+    </div>
+
     <div class="mixer-sliders">
       <label class="field"><span>Duck depth <em id="lblDepth">0.20</em></span>
         <input type="range" id="sDepth" min="0" max="1" step="0.01" value="0.20"></label>
@@ -560,6 +612,8 @@
     </div>
 
     <div class="muted" style="font-size:12px; margin-top: 10px">
+      Drag the <span style="color:#2ee066">green</span> edge handles on the song to choose the clip
+      that plays (defaults to the first 30 seconds).
       Drag the <span style="color:#ffa833">orange</span> announcement bar to set when it kicks in.
       In <em>Advanced</em>, tap an empty spot on the song envelope to add a point, drag to move,
       double-tap an existing point to remove it.
@@ -585,8 +639,8 @@ function toast(msg, ms=2200){
 
 /* ---------- IndexedDB layer ---------- */
 const DB_NAME = 'dugoutdj';
-const DB_VER  = 1;
-const STORES = ['kv','pads','players','blobs']; // blobs: audio files keyed by id
+const DB_VER  = 2;
+const STORES = ['kv','pads','players','blobs','teams']; // blobs: audio files keyed by id
 let _db = null;
 function openDB(){
   return new Promise((resolve,reject)=>{
@@ -606,15 +660,16 @@ function dbDelRaw(store, id){ return new Promise((res,rej)=>{ const r = tx(store
 function dbAll(store){ return new Promise((res,rej)=>{ const r = tx(store).getAll(); r.onsuccess=()=>res(r.result||[]); r.onerror=()=>rej(r.error); }); }
 /* v2: writes stamp updatedAt and nudge the cloud sync */
 async function dbPut(store, val){
-  if (store==='players' || store==='pads') val.updatedAt = Date.now();
+  if (store==='players' || store==='pads' || store==='teams') val.updatedAt = Date.now();
   await dbPutRaw(store, val);
-  if ((store==='players' || store==='pads') && typeof Cloud!=='undefined') Cloud.schedule();
+  if ((store==='players' || store==='pads' || store==='teams') && typeof Cloud!=='undefined') Cloud.schedule();
 }
 async function dbDel(store, id){
   await dbDelRaw(store, id);
   if (typeof Cloud!=='undefined' && Cloud.user){
     if (store==='players') Cloud.deleteRow('dugout_players', id);
     if (store==='pads')    Cloud.deleteRow('dugout_pads', id);
+    if (store==='teams')   Cloud.deleteRow('dugout_teams', id);
   }
 }
 async function kvGet(k, dflt=null){ const v = await dbGet('kv', k); return v? v.value : dflt; }
@@ -959,7 +1014,9 @@ const App = {
   tab: 'music',
   sections: null,
   pads: [],          // {id,label,blobId}
-  players: [],       // {id, name, num, walkupBlobId, annBlobId, mixBlobId}
+  players: [],       // {id, name, num, teamId, walkupBlobId, annBlobId, mixBlobId}
+  teams: [],         // {id, name, logoBlobId, order}  (v3)
+  activeTeamId: null,
   activePlayerIdx: 0,
   editPlayerId: null,
   shuffle: false,
@@ -974,10 +1031,120 @@ const App = {
     this.pads = await dbAll('pads');
     this.players = await dbAll('players');
     this.players.sort((a,b)=> (a.order??0) - (b.order??0));
+    this.teams = await dbAll('teams');
+    this.teams.sort((a,b)=> (a.order??0) - (b.order??0));
+    this.activeTeamId = await kvGet('activeTeam');
     this.shuffle = !!(await kvGet('shuffle'));
     this.ttsAnnounce = !!(await kvGet('ttsAnnounce'));
     $('#chkTTS').checked = this.ttsAnnounce;
     $('#trShuffle').classList.toggle('primary', this.shuffle);
+  },
+
+  /* -------- TEAMS (v3) -------- */
+  async ensureTeam(){
+    if (!this.teams.length){
+      const t = { id: uuid(), name: 'My Team', order: 0 };
+      this.teams.push(t);
+      await dbPut('teams', t);
+    }
+    if (!this.activeTeamId || !this.teams.find(t=>t.id===this.activeTeamId)){
+      this.activeTeamId = this.teams[0].id;
+      await kvSet('activeTeam', this.activeTeamId);
+    }
+    // adopt any players that pre-date teams
+    for (const p of this.players){
+      if (!p.teamId){ p.teamId = this.activeTeamId; await dbPut('players', p); }
+    }
+  },
+  teamPlayers(){
+    return this.players
+      .filter(p => p.teamId === this.activeTeamId)
+      .sort((a,b)=> (a.order??0) - (b.order??0));
+  },
+  activeTeam(){ return this.teams.find(t=>t.id===this.activeTeamId) || null; },
+  async renderHeaderTeam(){
+    const t = this.activeTeam();
+    $('#teamName').textContent = t ? t.name : 'Dugout DJ';
+    const logo = $('#teamLogo');
+    let img = 'none';
+    if (t && t.logoBlobId){
+      const b = await blobGet(t.logoBlobId);
+      if (b) img = `url(${URL.createObjectURL(b)})`;
+    }
+    logo.style.backgroundImage = img;
+  },
+  async renderTeams(){
+    const wrap = $('#teamsList'); wrap.innerHTML = '';
+    for (const t of this.teams){
+      const row = document.createElement('div');
+      row.className = 'team-row' + (t.id===this.activeTeamId ? ' cur' : '');
+      const count = this.players.filter(p=>p.teamId===t.id).length;
+      row.innerHTML = `
+        <div class="tlogo"></div>
+        <div class="tname">${escapeHtml(t.name)}<div class="tmeta">${count} player${count===1?'':'s'}</div></div>
+        <button class="btn small ghost" data-logo title="Team logo">🖼</button>
+        <button class="btn small ghost" data-rename title="Rename">✎</button>
+        <button class="btn small ghost" data-del title="Delete">✕</button>
+      `;
+      if (t.logoBlobId){
+        const b = await blobGet(t.logoBlobId);
+        if (b) row.querySelector('.tlogo').style.backgroundImage = `url(${URL.createObjectURL(b)})`;
+      }
+      row.addEventListener('click', (e) => {
+        if (e.target.closest('[data-logo],[data-rename],[data-del]')) return;
+        this.switchTeam(t.id);
+      });
+      row.querySelector('[data-logo]').addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const f = await pickFile('image/*'); if (!f) return;
+        if (t.logoBlobId) await blobDel(t.logoBlobId);
+        t.logoBlobId = uuid();
+        await blobPut(t.logoBlobId, f);
+        await dbPut('teams', t);
+        await this.renderTeams(); await this.renderHeaderTeam();
+        toast('Logo updated');
+      });
+      row.querySelector('[data-rename]').addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const name = prompt('Team name:', t.name); if (!name) return;
+        t.name = name;
+        await dbPut('teams', t);
+        await this.renderTeams(); await this.renderHeaderTeam();
+      });
+      row.querySelector('[data-del]').addEventListener('click', async (e) => {
+        e.stopPropagation();
+        if (this.teams.length<=1){ toast('You need at least one team'); return; }
+        const n = this.players.filter(p=>p.teamId===t.id).length;
+        if (!confirm(`Delete "${t.name}"${n?` and its ${n} player(s)`:''}? This cannot be undone.`)) return;
+        for (const p of this.players.filter(p=>p.teamId===t.id)){
+          for (const k of ['walkupBlobId','annBlobId','mixBlobId']) if (p[k]) await blobDel(p[k]);
+          await dbDel('players', p.id);
+        }
+        this.players = this.players.filter(p=>p.teamId!==t.id);
+        if (t.logoBlobId) await blobDel(t.logoBlobId);
+        await dbDel('teams', t.id);
+        this.teams = this.teams.filter(x=>x.id!==t.id);
+        if (this.activeTeamId===t.id) await this.switchTeam(this.teams[0].id);
+        else await this.renderTeams();
+      });
+      wrap.appendChild(row);
+    }
+  },
+  async switchTeam(id){
+    this.activeTeamId = id;
+    await kvSet('activeTeam', id);
+    this.activePlayerIdx = 0;
+    await this.renderHeaderTeam();
+    this.renderLineup();
+    await this.renderTeams();
+  },
+  async addTeam(){
+    const name = prompt('New team name:'); if (!name) return;
+    const t = { id: uuid(), name, order: this.teams.length };
+    this.teams.push(t);
+    await dbPut('teams', t);
+    await this.switchTeam(t.id);
+    toast('Team created — add players in the Lineup tab');
   },
 
   switchTab(t){
@@ -1139,20 +1306,24 @@ const App = {
   /* -------- LINEUP -------- */
   renderLineup(){
     const list = $('#lineupList'); list.innerHTML = '';
-    if (!this.players.length){
+    const roster = this.teamPlayers();
+    if (!roster.length){
       const empty = document.createElement('div');
       empty.className = 'card muted';
       empty.textContent = 'No players yet. Tap "+ Player" to build your lineup.';
       list.appendChild(empty);
       return;
     }
-    this.players.forEach((p, idx) => {
+    roster.forEach((p, idx) => {
       const div = document.createElement('div');
       div.className = 'player' + (idx===this.activePlayerIdx ? ' active' : '');
+      div.dataset.id = p.id;
+      div.style.gridTemplateColumns = '26px 56px 1fr auto';
       const bMix  = p.mixBlobId ? '<span class="badge ok">mix</span>' : '';
       const bWalk = p.walkupBlobId ? '<span class="badge ok">walk</span>' : '<span class="badge missing">walk</span>';
       const bAnn  = p.annBlobId ? '<span class="badge ok">ann</span>' : '<span class="badge warn">ann?</span>';
       div.innerHTML = `
+        <div class="drag-handle" data-drag title="Hold & slide to reorder">≡</div>
         <div class="jersey">${escapeHtml(p.num || '#')}</div>
         <div>
           <div class="name">${escapeHtml(p.name || 'Player')}</div>
@@ -1165,11 +1336,63 @@ const App = {
       `;
       div.querySelector('[data-play]').addEventListener('click', () => this.playPlayer(idx));
       div.querySelector('[data-edit]').addEventListener('click', () => this.openPlayerEditor(p.id));
+      this._bindDrag(div);
       list.appendChild(div);
     });
   },
+  /* v3: press-hold-slide reorder via the ≡ handle */
+  _bindDrag(card){
+    const handle = card.querySelector('[data-drag]');
+    const self = this;
+    let dragging = false;
+    handle.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      dragging = true;
+      card.classList.add('dragging');
+      try{ handle.setPointerCapture(e.pointerId); }catch(err){}
+    });
+    handle.addEventListener('pointermove', (e) => {
+      if (!dragging) return;
+      e.preventDefault();
+      const list = $('#lineupList');
+      const y = e.clientY;
+      const cards = Array.from(list.querySelectorAll('.player'));
+      for (const other of cards){
+        if (other === card) continue;
+        const r = other.getBoundingClientRect();
+        if (y > r.top && y < r.bottom){
+          const mid = r.top + r.height/2;
+          if (y < mid) list.insertBefore(card, other);
+          else list.insertBefore(card, other.nextSibling);
+          break;
+        }
+      }
+    });
+    const end = async () => {
+      if (!dragging) return;
+      dragging = false;
+      card.classList.remove('dragging');
+      await self._persistOrderFromDom();
+    };
+    handle.addEventListener('pointerup', end);
+    handle.addEventListener('pointercancel', end);
+  },
+  async _persistOrderFromDom(){
+    const list = $('#lineupList');
+    const ids = Array.from(list.querySelectorAll('.player')).map(el=>el.dataset.id);
+    const activeId = (this.teamPlayers()[this.activePlayerIdx]||{}).id;
+    for (let i=0;i<ids.length;i++){
+      const p = this.players.find(x=>x.id===ids[i]);
+      if (p && p.order!==i){ p.order = i; await dbPut('players', p); }
+    }
+    const roster = this.teamPlayers();
+    const ai = roster.findIndex(p=>p.id===activeId);
+    this.activePlayerIdx = ai < 0 ? 0 : ai;
+    this.renderLineup();
+    toast('Batting order updated');
+  },
   async addPlayer(){
-    const p = { id: uuid(), name: 'Player', num: '00', order: this.players.length };
+    const p = { id: uuid(), name: 'Player', num: '00', teamId: this.activeTeamId, order: this.teamPlayers().length };
     this.players.push(p); await dbPut('players', p);
     this.renderLineup();
     this.openPlayerEditor(p.id);
@@ -1206,7 +1429,8 @@ const App = {
     $('#modalPlayer').classList.remove('open');
   },
   async playPlayer(idx){
-    const p = this.players[idx]; if (!p) return;
+    const roster = this.teamPlayers();
+    const p = roster[idx]; if (!p) return;
     this.activePlayerIdx = idx; this.renderLineup();
     // 1. If a rendered mix exists, play that single file.
     if (p.mixBlobId){
@@ -1241,8 +1465,9 @@ const App = {
     }
   },
   async nextBatter(){
-    if (!this.players.length) return;
-    this.activePlayerIdx = (this.activePlayerIdx + 1) % this.players.length;
+    const roster = this.teamPlayers();
+    if (!roster.length) return;
+    this.activePlayerIdx = (this.activePlayerIdx + 1) % roster.length;
     await this.playPlayer(this.activePlayerIdx);
   },
   _playAndWait(buf){
@@ -1294,6 +1519,8 @@ const Mixer = {
   ann: null,            // AudioBuffer
   songBlob: null, annBlob: null,
   annStart: 1.0,        // seconds — when announcement enters
+  clipStart: 0,         // v3: selected portion of the song
+  clipEnd: 30,
   mode: 'auto',
   params: { depth:0.20, rdown:0.5, rup:1.0, avol:1.0 },
   manualPoints: null,   // array of {t,v} for advanced mode (over song duration)
@@ -1314,7 +1541,10 @@ const Mixer = {
     if (!this.songBlob){ toast('Set a walk-up song first'); $('#modalMixer').classList.remove('open'); return; }
     this.song = await decodeBlob(this.songBlob);
     if (this.annBlob) this.ann = await decodeBlob(this.annBlob);
-    this.annStart = Math.min(this.song.duration * 0.2, 4); // default: ~20% in
+    // v3: default to the first 30 seconds of the song
+    this.clipStart = 0;
+    this.clipEnd = Math.min(30, this.song.duration);
+    this.annStart = this.clipStart + Math.min((this.clipEnd - this.clipStart) * 0.2, 4);
     this.manualPoints = null; // start clean in auto
     this.canvas = $('#mixCanvas'); this.ctx = this.canvas.getContext('2d');
     this._fitCanvas();
@@ -1339,6 +1569,18 @@ const Mixer = {
     $('#sRdown').value = this.params.rdown; $('#lblRdown').textContent = fmt(this.params.rdown);
     $('#sRup').value   = this.params.rup;   $('#lblRup').textContent   = fmt(this.params.rup);
     $('#sAvol').value  = this.params.avol;  $('#lblAvol').textContent  = fmt(this.params.avol);
+    this._updateClipLabel();
+  },
+  _updateClipLabel(){
+    $('#lblClip').textContent = this._mmss(this.clipStart) + ' – ' + this._mmss(this.clipEnd);
+    $('#lblClipLen').textContent = '(' + Math.round(this.clipEnd - this.clipStart) + 's)';
+  },
+  useFullSong(){
+    if (!this.song) return;
+    this.clipStart = 0;
+    this.clipEnd = this.song.duration;
+    this.manualPoints = null;
+    this.draw();
   },
   setMode(m){
     if (m === this.mode) return;
@@ -1351,17 +1593,19 @@ const Mixer = {
     this.draw();
   },
   _autoEnvelopePoints(){
-    if (!this.ann) return [{t:0,v:1},{t:this.song.duration,v:1}];
+    // v3: envelope spans the selected clip, not the whole song
+    const c0 = this.clipStart, c1 = this.clipEnd;
+    if (!this.ann) return [{t:c0,v:1},{t:c1,v:1}];
     const p = this.params;
-    const aStart = this.annStart;
-    const aEnd = this.annStart + this.ann.duration;
+    const aStart = Math.max(c0, Math.min(this.annStart, c1));
+    const aEnd = Math.min(c1, aStart + this.ann.duration);
     const pts = [];
-    pts.push({t: 0, v: 1});
-    pts.push({t: Math.max(0, aStart - p.rdown), v: 1});
+    pts.push({t: c0, v: 1});
+    pts.push({t: Math.max(c0, aStart - p.rdown), v: 1});
     pts.push({t: aStart, v: p.depth});
     pts.push({t: aEnd, v: p.depth});
-    pts.push({t: Math.min(this.song.duration, aEnd + p.rup), v: 1});
-    pts.push({t: this.song.duration, v: 1});
+    pts.push({t: Math.min(c1, aEnd + p.rup), v: 1});
+    pts.push({t: c1, v: 1});
     // collapse exact duplicates by t
     return pts.filter((pt,i,arr)=> i===0 || pt.t > arr[i-1].t);
   },
@@ -1386,6 +1630,16 @@ const Mixer = {
 
     // waveforms
     if (this.song) this._drawWave(this.song, 0, w, songTop+16, songH-18, '#7ee0a4');
+
+    // v3: clip region — dim everything outside [clipStart, clipEnd], green trim handles
+    const cx0 = (this.clipStart/dur)*w, cx1 = (this.clipEnd/dur)*w;
+    c.fillStyle = 'rgba(5,8,6,0.65)';
+    if (cx0 > 0) c.fillRect(0, songTop, cx0, songH);
+    if (cx1 < w) c.fillRect(cx1, songTop, w - cx1, songH);
+    c.fillStyle = 'rgba(46,224,102,0.95)';
+    c.fillRect(Math.max(0, cx0-2), songTop, 4, songH);
+    c.fillRect(Math.min(w-4, cx1-2), songTop, 4, songH);
+    this._updateClipLabel();
     if (this.ann) {
       const xStart = (this.annStart/dur)*w;
       const wAnn = (this.ann.duration/dur)*w;
@@ -1445,6 +1699,12 @@ const Mixer = {
       const {w,h,dur} = this.geom;
       const songTop = 10, songH = (h-20)*0.55;
       const annTop = songTop + songH + 10, annH = (h-20)*0.45 - 10;
+      // v3: clip trim handles take priority in the song region
+      if (y >= songTop && y <= songTop + songH){
+        const cx0 = (this.clipStart/dur)*w, cx1 = (this.clipEnd/dur)*w;
+        if (Math.abs(x - cx0) < 16) return { kind:'clipL' };
+        if (Math.abs(x - cx1) < 16) return { kind:'clipR' };
+      }
       // ann region first
       if (this.ann && y >= annTop && y <= annTop+annH){
         const xStart = (this.annStart/dur)*w;
@@ -1458,9 +1718,10 @@ const Mixer = {
           const px = (pts[i].t/dur)*w, py = songTop + (1-pts[i].v)*songH;
           if ((px-x)*(px-x) + (py-y)*(py-y) < 14*14) return { kind:'pt', idx:i };
         }
-        // empty area in song region -> create a new point
+        // empty area in song region -> create a new point (within the clip)
         if (y >= songTop && y <= songTop + songH){
-          const t = Math.max(0, Math.min(dur, (x/w)*dur));
+          if (!this.manualPoints) this.manualPoints = this._autoEnvelopePoints();
+          const t = Math.max(this.clipStart, Math.min(this.clipEnd, (x/w)*dur));
           const v = Math.max(0, Math.min(1, 1 - (y - songTop)/songH));
           const ip = this.manualPoints.findIndex(p => p.t > t);
           const idx = ip < 0 ? this.manualPoints.length : ip;
@@ -1492,17 +1753,28 @@ const Mixer = {
       const {x,y} = getPt(ev);
       const {w,h,dur} = this.geom;
       const songTop = 10, songH = (h-20)*0.55;
-      if (this.dragTarget.kind === 'ann'){
+      if (this.dragTarget.kind === 'clipL'){
+        // v3: drag clip start
+        this.clipStart = Math.max(0, Math.min(this.clipEnd - 3, (x/w)*dur));
+        if (this.annStart < this.clipStart) this.annStart = this.clipStart;
+        this.manualPoints = null;
+      } else if (this.dragTarget.kind === 'clipR'){
+        // v3: drag clip end
+        this.clipEnd = Math.max(this.clipStart + 3, Math.min(dur, (x/w)*dur));
+        this.manualPoints = null;
+      } else if (this.dragTarget.kind === 'ann'){
         const xStart = Math.max(0, Math.min(w - (this.ann.duration/dur)*w, x - (this.dragTarget.offset||0)));
-        this.annStart = Math.max(0, Math.min(dur - this.ann.duration, (xStart/w)*dur));
+        const hi = Math.max(this.clipStart, this.clipEnd - this.ann.duration);
+        this.annStart = Math.max(this.clipStart, Math.min(hi, (xStart/w)*dur));
       } else if (this.dragTarget.kind === 'pt'){
         const i = this.dragTarget.idx;
         const pts = this.manualPoints;
-        const t = Math.max(0, Math.min(dur, (x/w)*dur));
+        if (!pts){ this.draw(); return; }
+        const t = Math.max(this.clipStart, Math.min(this.clipEnd, (x/w)*dur));
         const v = Math.max(0, Math.min(1, 1 - (y - songTop)/songH));
-        // clamp endpoints to ends; keep order
-        if (i === 0) pts[i] = { t: 0, v };
-        else if (i === pts.length-1) pts[i] = { t: dur, v };
+        // clamp endpoints to clip edges; keep order
+        if (i === 0) pts[i] = { t: this.clipStart, v };
+        else if (i === pts.length-1) pts[i] = { t: this.clipEnd, v };
         else {
           const lo = pts[i-1].t + 0.001, hi = pts[i+1].t - 0.001;
           pts[i] = { t: Math.min(hi, Math.max(lo, t)), v };
@@ -1533,17 +1805,25 @@ const Mixer = {
     this.stopPreview();
     const ctx = audio();
     const t0 = ctx.currentTime + 0.05;
+    // v3: play only the selected clip; envelope times are absolute song-time,
+    // so schedule them offset by clipStart.
+    const c0 = this.clipStart, clipDur = Math.max(0.1, this.clipEnd - this.clipStart);
     const songSrc = ctx.createBufferSource(); songSrc.buffer = this.song;
     const gSong = ctx.createGain();
     songSrc.connect(gSong); gSong.connect(getLocalBus());
-    this._scheduleEnvelopeOnGain(gSong, ctx, t0);
-    songSrc.start(t0);
+    const pts = this.envelopePoints();
+    gSong.gain.cancelScheduledValues(0);
+    gSong.gain.setValueAtTime(pts[0].v, t0);
+    for (let i=1; i<pts.length; i++){
+      gSong.gain.linearRampToValueAtTime(pts[i].v, t0 + Math.max(0, pts[i].t - c0));
+    }
+    songSrc.start(t0, c0, clipDur);
     let annSrc = null, gAnn = null;
     if (this.ann){
       annSrc = ctx.createBufferSource(); annSrc.buffer = this.ann;
       gAnn = ctx.createGain(); gAnn.gain.value = this.params.avol;
       annSrc.connect(gAnn); gAnn.connect(getLocalBus());
-      annSrc.start(t0 + this.annStart);
+      annSrc.start(t0 + Math.max(0, this.annStart - c0));
     }
     this.previewNodes = { song: songSrc, ann: annSrc, gSong, gAnn, startedAt: t0 };
     songSrc.onended = () => { if (this.previewNodes.song===songSrc) this.previewNodes.song = null; };
@@ -1558,22 +1838,24 @@ const Mixer = {
   async saveMix(){
     if (!this.song){ toast('No song'); return; }
     toast('Rendering mix…');
-    const dur = this.song.duration; // mix length = song length (announcement clipped if exceeds)
+    // v3: mix length = selected clip length (announcement clipped if it exceeds)
+    const c0 = this.clipStart;
+    const dur = Math.max(0.1, this.clipEnd - this.clipStart);
     const sr = 44100, ch = 2;
     const offline = new (window.OfflineAudioContext || window.webkitOfflineAudioContext)(ch, Math.ceil(dur*sr), sr);
     const songSrc = offline.createBufferSource(); songSrc.buffer = this.song;
     const gSong = offline.createGain();
     songSrc.connect(gSong); gSong.connect(offline.destination);
-    // schedule envelope
+    // schedule envelope (times offset to clip start)
     const pts = this.envelopePoints();
     gSong.gain.setValueAtTime(pts[0].v, 0);
-    for (let i=1;i<pts.length;i++) gSong.gain.linearRampToValueAtTime(pts[i].v, pts[i].t);
-    songSrc.start(0);
+    for (let i=1;i<pts.length;i++) gSong.gain.linearRampToValueAtTime(pts[i].v, Math.max(0, pts[i].t - c0));
+    songSrc.start(0, c0, dur);
     if (this.ann){
       const annSrc = offline.createBufferSource(); annSrc.buffer = this.ann;
       const gAnn = offline.createGain(); gAnn.gain.value = this.params.avol;
       annSrc.connect(gAnn); gAnn.connect(offline.destination);
-      annSrc.start(this.annStart);
+      annSrc.start(Math.max(0, this.annStart - c0));
     }
     const rendered = await offline.startRendering();
     const wav = encodeWav(rendered);
@@ -1759,6 +2041,15 @@ const Cloud = {
     if (!this.user || this.busy) return;
     this.busy = true;
     try{
+      for (const t of App.teams){
+        const logo = await this._ensureUploaded(t.logoBlobId);
+        await this.sb.from('dugout_teams').upsert({
+          id: t.id, user_id: this.user.id,
+          name: t.name || 'Team', logo_path: logo,
+          sort: t.order ?? 0,
+          updated_at: new Date(t.updatedAt || Date.now()).toISOString()
+        });
+      }
       for (const p of App.players){
         const walk = await this._ensureUploaded(p.walkupBlobId);
         const ann  = await this._ensureUploaded(p.annBlobId);
@@ -1766,6 +2057,7 @@ const Cloud = {
         await this.sb.from('dugout_players').upsert({
           id: p.id, user_id: this.user.id,
           name: p.name || 'Player', jersey: p.num || '',
+          team_id: p.teamId || null,
           walkup_path: walk, ann_path: ann, mixed_path: mix,
           sort: p.order ?? 0,
           updated_at: new Date(p.updatedAt || Date.now()).toISOString()
@@ -1825,6 +2117,24 @@ const Cloud = {
       }
     }catch(e){ console.warn(e); }
 
+    // TEAMS — newer-wins merge by id (v3)
+    try{
+      const { data: ct } = await this.sb.from('dugout_teams').select('*');
+      const teamById = Object.fromEntries(App.teams.map(t=>[t.id,t]));
+      for (const r of (ct || [])){
+        const lt = teamById[r.id];
+        const cloudTime = new Date(r.updated_at).getTime();
+        if (!lt || cloudTime > (lt.updatedAt || 0)){
+          const nt = lt || { id: r.id };
+          nt.name = r.name; nt.order = r.sort ?? 0; nt.updatedAt = cloudTime;
+          nt.logoBlobId = r.logo_path ? await this._ensureLocal(r.logo_path) : (lt ? lt.logoBlobId : null);
+          await dbPutRaw('teams', nt);
+        }
+      }
+      App.teams = await dbAll('teams');
+      App.teams.sort((a,b)=> (a.order??0) - (b.order??0));
+    }catch(e){ console.warn(e); }
+
     // PLAYERS — newer-wins merge by id
     try{
       const { data: cp } = await this.sb.from('dugout_players').select('*');
@@ -1835,6 +2145,7 @@ const Cloud = {
         if (!lp || cloudTime > (lp.updatedAt || 0)){
           const np = lp || { id: r.id };
           np.name = r.name; np.num = r.jersey; np.order = r.sort ?? 0; np.updatedAt = cloudTime;
+          np.teamId = r.team_id || (lp ? lp.teamId : null);
           np.walkupBlobId = r.walkup_path ? await this._ensureLocal(r.walkup_path) : (lp ? lp.walkupBlobId : null);
           np.annBlobId    = r.ann_path    ? await this._ensureLocal(r.ann_path)    : (lp ? lp.annBlobId : null);
           np.mixBlobId    = r.mixed_path  ? await this._ensureLocal(r.mixed_path)  : (lp ? lp.mixBlobId : null);
@@ -1862,6 +2173,8 @@ const Cloud = {
       App.pads = await dbAll('pads');
     }catch(e){ console.warn(e); }
 
+    await App.ensureTeam();
+    await App.renderHeaderTeam();
     App.renderLineup();
     App.renderPads();
     App.renderSections();
@@ -1936,6 +2249,14 @@ window.addEventListener('DOMContentLoaded', async () => {
 
   // songs modal (v2)
   $('#songsClose').addEventListener('click', () => $('#modalSongs').classList.remove('open'));
+
+  // teams (v3)
+  $('#teamSwitch').addEventListener('click', async () => { await App.renderTeams(); $('#modalTeams').classList.add('open'); });
+  $('#teamsClose').addEventListener('click', () => $('#modalTeams').classList.remove('open'));
+  $('#btnAddTeam').addEventListener('click', () => App.addTeam());
+
+  // mixer clip (v3)
+  $('#btnFullSong').addEventListener('click', () => Mixer.useFullSong());
 
   // sounds
   $('#btnAddPad').addEventListener('click', () => App.addPad());
@@ -2046,6 +2367,11 @@ window.addEventListener('DOMContentLoaded', async () => {
   Cloud.init();
   await Cloud.start();
   await Spotify.init();
+
+  // v3: guarantee a team exists, adopt orphan players, show team in header
+  await App.ensureTeam();
+  await App.renderHeaderTeam();
+  App.renderLineup();
 
   // auto-load playlist if logged in
   if (Spotify.token){
