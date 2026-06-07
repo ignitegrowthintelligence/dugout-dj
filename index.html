@@ -593,12 +593,17 @@
     <div class="card" id="installHint" style="display:none; margin-bottom:10px">
       <div class="h-title" style="margin-top:0">Install on your phone</div>
       <div class="muted" style="font-size:13px; margin-bottom:8px">
-        Opens like a real app, no address bar.
+        Opens like a real app — full screen, no address bar.
       </div>
-      <div style="font-size:13px; line-height:1.5">
-        <div><strong>iPhone (Safari):</strong> Tap the Share button → <em>Add to Home Screen</em>.</div>
-        <div><strong>Android (Chrome):</strong> Tap the ⋮ menu → <em>Install app</em>.</div>
+      <!-- v6.4: one-tap install via captured beforeinstallprompt (Chrome/Edge/Android) -->
+      <button class="btn primary" id="btnInstallApp" style="display:none; width:100%; margin-bottom:8px">📲 Add to Home Screen</button>
+      <div id="installInstructions" style="font-size:13px; line-height:1.5">
+        <div id="instrIos"><strong>iPhone / iPad (Safari):</strong> Tap the Share button <span style="opacity:.8">⎙</span> → <em>Add to Home Screen</em>.</div>
+        <div id="instrAndroid"><strong>Android (Chrome):</strong> Tap the ⋮ menu → <em>Add to Home screen</em> → <em>Install</em>.</div>
+        <div id="instrDesktop"><strong>Computer (Chrome/Edge):</strong> Click the install icon at the right end of the address bar, or ⋮ menu → <em>Cast, save, and share</em> → <em>Install page as app</em>.</div>
       </div>
+      <!-- v6.4: fullscreen toggle for when the app runs in a normal browser tab -->
+      <button class="btn small ghost" id="btnFullscreen" style="display:none; width:100%; margin-top:8px">⛶ Go full screen (this tab)</button>
     </div>
 
     <div class="card" style="margin-bottom:10px">
@@ -815,6 +820,25 @@ const $  = (s, r=document) => r.querySelector(s);
 const $$ = (s, r=document) => Array.from(r.querySelectorAll(s));
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const fmt = n => (Math.round(n*100)/100).toFixed(2);
+/* v6.4: capture the browser's PWA install prompt as early as possible.
+   Chrome fires beforeinstallprompt once install criteria are met; we stash it
+   so the ⚙ settings "Add to Home Screen" button can trigger the real native
+   prompt — Chrome buried the menu entry, so an in-app button is far easier. */
+let _installPrompt = null;
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  _installPrompt = e;
+  const b = document.getElementById('btnInstallApp');
+  const instr = document.getElementById('installInstructions');
+  if (b){ b.style.display = ''; if (instr) instr.style.display = 'none'; }
+});
+window.addEventListener('appinstalled', () => {
+  _installPrompt = null;
+  const card = document.getElementById('installHint');
+  if (card) card.style.display = 'none';
+  toast('✓ Installed — open Dugout DJ from your home screen');
+});
+
 function toast(msg, ms=2200){
   const t = $('#toast'); t.textContent = msg; t.classList.add('show');
   clearTimeout(toast._h); toast._h = setTimeout(()=>t.classList.remove('show'), ms);
@@ -3775,7 +3799,53 @@ window.addEventListener('DOMContentLoaded', async () => {
       window.navigator.standalone === true;
     const el = document.getElementById('installHint');
     if (el) el.style.display = isStandalone ? 'none' : '';
+    if (isStandalone) return;
+    // v6.4: tailor the card to this device
+    const isIos = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+      (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1); // iPadOS lies
+    const isAndroid = /Android/i.test(navigator.userAgent);
+    const show = (id, on) => { const n = document.getElementById(id); if (n) n.style.display = on ? '' : 'none'; };
+    if (_installPrompt){
+      show('btnInstallApp', true);
+      show('installInstructions', false);
+    } else {
+      show('btnInstallApp', false);
+      show('installInstructions', true);
+      show('instrIos', isIos || (!isAndroid && !isIos));
+      show('instrAndroid', isAndroid);
+      show('instrDesktop', !isIos && !isAndroid);
+    }
+    // fullscreen toggle: only where the API exists (Android Chrome, desktop) and we're in a tab
+    show('btnFullscreen', !!document.documentElement.requestFullscreen && document.fullscreenEnabled !== false);
   }
+  // v6.4: one-tap install + fullscreen toggle
+  $('#btnInstallApp').addEventListener('click', async () => {
+    if (!_installPrompt){ refreshInstallHint(); return; }
+    _installPrompt.prompt();
+    try{
+      const choice = await _installPrompt.userChoice;
+      if (choice && choice.outcome === 'accepted'){ /* appinstalled handler does the rest */ }
+      else toast('Install cancelled');
+    }catch(e){}
+    _installPrompt = null;
+    refreshInstallHint();
+  });
+  $('#btnFullscreen').addEventListener('click', async () => {
+    try{
+      if (document.fullscreenElement){
+        await document.exitFullscreen();
+        $('#btnFullscreen').textContent = '⛶ Go full screen (this tab)';
+      } else {
+        await document.documentElement.requestFullscreen();
+        $('#btnFullscreen').textContent = '⛶ Exit full screen';
+        $('#modalAdmin').classList.remove('open');
+      }
+    }catch(e){ toast('Full screen not available here'); }
+  });
+  document.addEventListener('fullscreenchange', () => {
+    const b = $('#btnFullscreen');
+    if (b) b.textContent = document.fullscreenElement ? '⛶ Exit full screen' : '⛶ Go full screen (this tab)';
+  });
   $('#btnAdmin').addEventListener('click', () => { renderSongManager(); refreshInstallHint(); $('#modalAdmin').classList.add('open'); });
   $('#adminClose').addEventListener('click', () => $('#modalAdmin').classList.remove('open'));
   $('#btnSpotifyLogin').addEventListener('click', () => Spotify.login());
