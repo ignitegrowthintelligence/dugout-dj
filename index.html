@@ -633,26 +633,24 @@
         <input type="number" id="tLen" min="3" step="1" placeholder="30"></label>
     </div>
 
-    <details style="margin-top:10px">
-      <summary class="muted" style="font-size:12px; cursor:pointer">Duck &amp; volume settings</summary>
-      <div class="mixer-sliders">
-        <label class="field"><span>Duck depth <em id="lblDepth">0.20</em></span>
-          <input type="range" id="sDepth" min="0" max="1" step="0.01" value="0.20"></label>
-        <label class="field"><span>Ramp-down (s) <em id="lblRdown">0.50</em></span>
-          <input type="range" id="sRdown" min="0" max="3" step="0.05" value="0.50"></label>
-        <label class="field"><span>Ramp-up (s) <em id="lblRup">1.00</em></span>
-          <input type="range" id="sRup" min="0" max="5" step="0.05" value="1.00"></label>
+    <details style="margin-top:10px" open>
+      <summary class="muted" style="font-size:12px; cursor:pointer">Fade &amp; volume settings</summary>
+      <div class="mixer-sliders" style="grid-template-columns: 1fr 1fr;">
+        <label class="field"><span>Fade-in length (s) <em id="lblFadeIn">2.00</em></span>
+          <input type="range" id="sFadeIn" min="0" max="30" step="0.1" value="2.0"></label>
         <label class="field"><span>Announcement vol <em id="lblAvol">1.00</em></span>
           <input type="range" id="sAvol" min="0" max="1.5" step="0.01" value="1.00"></label>
       </div>
+      <div id="dropWarn" style="font-size:12px; color:#f8b34a; display:none; margin-top:6px"></div>
     </details>
 
     <div class="muted" style="font-size:12px; margin-top: 10px">
       Drag the <span style="color:#2ee066">green</span> edge handles on the song to choose the clip
-      that plays (defaults to the first 30 seconds).
-      Drag the <span style="color:#ffa833">orange</span> announcement bar to set when it kicks in.
-      Tap an empty spot on the song envelope to add a point, drag to move, double-tap a point
-      to remove it. &#10024; Auto-mix finds the chorus and sets everything up — tweak from there.
+      that plays. Drag the <span style="color:#ffa833">orange</span> announcement bar to set when it
+      kicks in. Drag the <span style="color:#39c5ff">blue "Drop"</span> marker to mark the most
+      exciting moment of the song — Auto-mix lines up the drop with the end of the announcement so
+      the song hits full volume right when the announcer finishes. Tap an empty spot on the song
+      envelope to add a point, drag to move, double-tap a point to remove it.
     </div>
   </div>
 </div>
@@ -736,7 +734,7 @@ async function kvSet(k, v){
 }
 async function blobPut(id, blob){ await dbPutRaw('blobs', { id, blob }); }
 async function blobGet(id){ const r = await dbGet('blobs', id); return r? r.blob : null; }
-async function blobDel(id){ await dbDelRaw('blobs', id); }
+async function blobDel(id){ await dbDelRaw('blobs', id); evictBuffer(id); /* v5: drop cached AudioBuffer */ }
 function uuid(){ return 'id-' + Math.random().toString(36).slice(2,10) + Date.now().toString(36); }
 
 /* ---------- shared Web Audio context ---------- */
@@ -750,6 +748,33 @@ async function decodeBlob(blob){
   const buf = await blob.arrayBuffer();
   return await audio().decodeAudioData(buf.slice(0));
 }
+
+/* v5: decoded-buffer cache keyed by blobId.
+   Was: every play call re-fetched the blob from IndexedDB AND re-ran
+   decodeAudioData, which on phones routinely takes 500ms-2s for a 3-5MB MP3 -
+   the main thread stutter shows up as choppy first-play playback. Caching the
+   decoded AudioBuffer makes subsequent plays effectively instant, and the
+   prewarm helper lets us decode during idle UI moments (player editor open,
+   walkup overlay open) so taps never wait. */
+const _bufCache = new Map(); // blobId -> AudioBuffer
+const _bufDecoding = new Map(); // blobId -> Promise<AudioBuffer> (in-flight)
+async function getDecodedBuffer(blobId){
+  if (!blobId) return null;
+  if (_bufCache.has(blobId)) return _bufCache.get(blobId);
+  if (_bufDecoding.has(blobId)) return _bufDecoding.get(blobId);
+  const p = (async () => {
+    const blob = await blobGet(blobId);
+    if (!blob){ _bufDecoding.delete(blobId); return null; }
+    const buf = await decodeBlob(blob);
+    _bufCache.set(blobId, buf);
+    _bufDecoding.delete(blobId);
+    return buf;
+  })();
+  _bufDecoding.set(blobId, p);
+  return p;
+}
+function prewarmBuffer(blobId){ /* fire-and-forget */ if (blobId) getDecodedBuffer(blobId).catch(()=>{}); }
+function evictBuffer(blobId){ if (blobId){ _bufCache.delete(blobId); _bufDecoding.delete(blobId); } }
 
 /* one local-playback bus -> master gain -> destination */
 let localBus = null;
@@ -1039,20 +1064,32 @@ const Spotify = {
     try{ await this.api('PUT', `/me/player/volume?volume_percent=${pct}${this.deviceId?'&device_id='+this.deviceId:''}`); }
     catch(e){ /* swallow — happens when no playback */ }
   },
+  /* v5: duck/unduck used to call the REST /me/player/volume endpoint, which is
+     an HTTP round-trip - slow (~200-800ms on cellular) and the latency itself
+     stutters the music. Switch to the Web Playback SDK's local player.setVolume,
+     which is in-process and effectively instant. Single call down, single call
+     up - no ramp. */
   async duck(depth=0.2){
-    // remember current and lower to depth
-    const cur = (this.state && typeof this.state.volume === 'number') ? this.state.volume : 1.0;
-    this.preDuckVolume = cur;
-    await this.setVolumePct(Math.round(depth*100));
+    if (!this.player) return;
+    try{
+      const cur = await this.player.getVolume();
+      this.preDuckVolume = (typeof cur === 'number' && cur > 0) ? cur : 1.0;
+    }catch(e){ this.preDuckVolume = 1.0; }
+    try{ await this.player.setVolume(Math.max(0, Math.min(1, depth))); }catch(e){}
   },
   async unduck(){
-    await this.setVolumePct(Math.round((this.preDuckVolume??1.0)*100));
+    if (!this.player) return;
+    try{ await this.player.setVolume(this.preDuckVolume??1.0); }catch(e){}
   },
+  /* v5: fade used 30 setVolume calls in a loop - even via the local SDK, on
+     phones each call wakes the audio thread and the cumulative jitter is
+     audible. Drop to 4 ramp steps (smooth enough; still feels like a fade)
+     and keep them on the local SDK. */
   async fade(seconds=3){
     if (!this.player) return;
-    const steps = 30, dur = seconds*1000/steps;
     let v = 1.0;
     try{ v = await this.player.getVolume(); }catch(e){ v=1.0; }
+    const steps = 4, dur = seconds*1000/steps;
     for (let i=0;i<steps;i++){
       const nv = v * (1 - (i+1)/steps);
       try{ await this.player.setVolume(Math.max(0, nv)); }catch(e){}
@@ -1418,10 +1455,10 @@ const App = {
   async playPad(id, el){
     const pad = this.pads.find(x=>x.id===id);
     if (!pad || !pad.blobId){ toast('No clip'); return; }
-    const blob = await blobGet(pad.blobId);
-    if (!blob){ toast('Clip missing'); return; }
     try{
-      const buf = await decodeBlob(blob);
+      // v5: cached decode - no IDB read + decodeAudioData on every tap
+      const buf = await getDecodedBuffer(pad.blobId);
+      if (!buf){ toast('Clip missing'); return; }
       await this._duckThenPlay(buf, () => {
         if (el) el.classList.add('playing');
       }, () => {
@@ -1574,6 +1611,10 @@ const App = {
     $('#bMix').className = 'badge ' + (p.mixBlobId ? 'ok' : 'missing');
     $('#playerModalTitle').textContent = (p.name||'Player') + ' #' + (p.num||'');
     $('#modalPlayer').classList.add('open');
+    // v5: prewarm decoded buffers so editor preview buttons play instantly
+    prewarmBuffer(p.walkupBlobId);
+    prewarmBuffer(p.annBlobId);
+    prewarmBuffer(p.mixBlobId);
   },
   async savePlayerEdits(){
     const p = this.players.find(x=>x.id===this.editPlayerId); if (!p) return;
@@ -1607,30 +1648,30 @@ const App = {
     if (gen !== this._walkupGen) return;
     // 1. If a rendered mix exists, play that single file.
     if (p.mixBlobId){
-      const blob = await blobGet(p.mixBlobId);
-      if (blob){
-        if (gen !== this._walkupGen) return;
-        const buf = await decodeBlob(blob);
-        if (gen !== this._walkupGen) return;
-        this._playWalkupBuffer(buf);
-        return;
-      }
+      // v5: cached decode - no IDB+decode at tap-time
+      const buf = await getDecodedBuffer(p.mixBlobId);
+      if (gen !== this._walkupGen) return;
+      if (buf){ this._playWalkupBuffer(buf); return; }
     }
     // 2. Otherwise announcement (or TTS), then walk-up song.
-    let annBlob = p.annBlobId ? await blobGet(p.annBlobId) : null;
-    if (gen !== this._walkupGen) return;
-    if (annBlob){
-      const buf = await decodeBlob(annBlob);
+    //    v5: kick off the walkup decode IN PARALLEL with the announcement
+    //    decode/play, so the song is ready the instant the announcer ends.
+    //    Was: walkup decode only started AFTER the announcement finished,
+    //    leaving a 0.5-2s gap on phones - read as "choppy/stuttering".
+    const walkupPromise = p.walkupBlobId ? getDecodedBuffer(p.walkupBlobId) : Promise.resolve(null);
+    walkupPromise.catch(()=>{}); // swallow - we'll handle below
+    if (p.annBlobId){
+      const annBuf = await getDecodedBuffer(p.annBlobId);
       if (gen !== this._walkupGen) return;
-      await this._playAndWait(buf);
+      if (annBuf) await this._playAndWait(annBuf);
     } else if (this.ttsAnnounce){
       await this._speak(`Now batting, number ${p.num||''}, ${p.name||'Player'}`);
     }
     if (gen !== this._walkupGen) return;
     if (p.walkupBlobId){
-      const wbuf = await decodeBlob(await blobGet(p.walkupBlobId));
+      const wbuf = await walkupPromise;
       if (gen !== this._walkupGen) return;
-      this._playWalkupBuffer(wbuf);
+      if (wbuf) this._playWalkupBuffer(wbuf);
     }
   },
   /* v3.4: walk-up audio goes through its own gain node so we can fade it out */
@@ -1670,6 +1711,10 @@ const App = {
     $('#woName').textContent = p.name || 'Player';
     $('#woSub').textContent = p.mixBlobId ? 'Mixed walk-up' : 'Walk-up';
     $('#walkupOverlay').classList.add('open');
+    // v5: prewarm so even the first tap of the night isn't stuttery
+    prewarmBuffer(p.mixBlobId);
+    prewarmBuffer(p.walkupBlobId);
+    prewarmBuffer(p.annBlobId);
   },
   closeWalkupOverlay(){
     $('#walkupOverlay').classList.remove('open');
@@ -1740,7 +1785,12 @@ const Mixer = {
   clipStart: 0,         // v3: selected portion of the song
   clipEnd: 30,
   envCustom: false,     // v4: true once the user hand-edits the envelope
-  params: { depth:0.20, rdown:0.5, rup:1.0, avol:1.0 },
+  // v5: new smart-default fields - dropPoint (song-time of the most exciting moment)
+  // and fadeInSec (how long the song takes to ramp from 0 to full). Old duck params
+  // (depth/rdown/rup) are no longer used in the smart default.
+  dropPoint: 0,
+  fadeInSec: 2.0,
+  params: { avol:1.0 },
   manualPoints: null,   // array of {t,v} for advanced mode (over song duration)
   previewNodes: { song:null, ann:null, gSong:null, gAnn:null, startedAt:0 },
   canvas: null, ctx: null,
@@ -1760,25 +1810,40 @@ const Mixer = {
     this.songBlob = p.walkupBlobId ? await blobGet(p.walkupBlobId) : null;
     this.annBlob  = p.annBlobId    ? await blobGet(p.annBlobId)    : null;
     if (!this.songBlob){ toast('Set a walk-up song first'); $('#modalMixer').classList.remove('open'); return; }
-    this.song = await decodeBlob(this.songBlob);
-    if (this.annBlob) this.ann = await decodeBlob(this.annBlob);
-    // v3.2: restore this player's last-saved mix settings, else default to first 30s
+    // v5: use the decoded-buffer cache so re-opening the mixer is instant
+    this.song = await getDecodedBuffer(p.walkupBlobId);
+    if (p.annBlobId) this.ann = await getDecodedBuffer(p.annBlobId);
+    // v3.2 + v5: restore this player's last-saved mix settings, else use new smart default
     const ms = p.mixSettings;
     const songDur = this.song.duration;
+    const Tann = this.ann ? this.ann.duration : 0;
     if (ms && typeof ms.clipStart === 'number' && typeof ms.clipEnd === 'number' && ms.clipStart < songDur){
       this.clipStart = Math.max(0, Math.min(ms.clipStart, Math.max(0, songDur - 3)));
       this.clipEnd = Math.max(this.clipStart + 3, Math.min(ms.clipEnd, songDur));
       this.annStart = Math.max(this.clipStart, Math.min((typeof ms.annStart === 'number' ? ms.annStart : this.clipStart), this.clipEnd));
-      this.params = Object.assign({}, this.params, ms.params || {});
+      this.params = Object.assign({ avol:1.0 }, ms.params || {});
+      // v5: restore drop point + fade-in length (or sensible defaults if missing)
+      this.dropPoint = (typeof ms.dropPoint === 'number')
+        ? Math.max(0, Math.min(songDur, ms.dropPoint))
+        : Math.max(0, Math.min(songDur, songDur * 0.25));
+      this.fadeInSec = (typeof ms.fadeInSec === 'number')
+        ? Math.max(0, Math.min(30, ms.fadeInSec))
+        : Math.max(0, Math.min(30, Tann || 2));
       this.manualPoints = (Array.isArray(ms.manualPoints) && ms.manualPoints.length >= 2)
         ? ms.manualPoints.map(pt => ({ t: Math.max(this.clipStart, Math.min(this.clipEnd, pt.t)), v: Math.max(0, Math.min(1, pt.v)) }))
         : null;
       this.envCustom = !!this.manualPoints;
       toast('Restored your last mix settings');
     } else {
-      this.clipStart = 0;
-      this.clipEnd = Math.min(30, songDur);
-      this.annStart = this.clipStart + Math.min((this.clipEnd - this.clipStart) * 0.2, 4);
+      // v5: new smart default - song starts silent, ramps up over the announcement
+      // so the "drop" hits full volume right as the announcer finishes.
+      this.dropPoint = Math.max(0, Math.min(songDur, songDur * 0.25));
+      this.fadeInSec = Math.max(0, Math.min(30, Tann || 2));
+      const songStartOffset = Math.max(0, this.dropPoint - Tann);
+      this.clipStart = songStartOffset;
+      this.clipEnd = Math.min(songDur, this.clipStart + Math.max(30, Tann + 25));
+      this.annStart = this.clipStart; // announcement plays from mix-time 0
+      this.params = { avol: 1.0 };
       this.manualPoints = null;
       this.envCustom = false;
     }
@@ -1803,6 +1868,10 @@ const Mixer = {
   },
   /* v3.1: heavy song waveform rendered once to an offscreen layer so the
      playhead can animate at full frame rate */
+  /* v5: also pre-render the ANNOUNCEMENT waveform off-screen. Was: draw()
+     called _drawWave(this.ann) every preview animation frame - a full
+     getChannelData scan + per-pixel min/max loop at 60Hz, which on phones
+     is a real perf cost and shows up as preview-window jank. */
   _renderStatic(){
     if (!this.canvas || !this.geom.w) return;
     const {w,h,dur} = this.geom;
@@ -1819,13 +1888,38 @@ const Mixer = {
     c.fillText('SONG (' + this._mmss(dur) + ')', 6, songTop+12);
     c.fillText('ANNOUNCEMENT' + (this.ann? ' ('+this._mmss(this.ann.duration)+')' : ' — none'), 6, annTop+12);
     if (this.song) this._drawWave(this.song, 0, w, songTop+16, songH-18, '#7ee0a4', c);
+    // v5: cache the announcement waveform into an offscreen canvas. draw() blits it.
+    this._annStatic = null;
+    if (this.ann && dur > 0){
+      const wAnnPx = Math.max(2, Math.round((this.ann.duration/dur)*w));
+      const cAnn = document.createElement('canvas');
+      cAnn.width = wAnnPx * dpr; cAnn.height = (annH-22) * dpr;
+      const ac = cAnn.getContext('2d');
+      ac.setTransform(dpr,0,0,dpr,0,0);
+      this._drawWave(this.ann, 0, wAnnPx, 0, annH-22, '#ffa833', ac);
+      this._annStatic = { canvas: cAnn, w: wAnnPx, h: annH-22 };
+    }
   },
   _syncSliders(){
-    $('#sDepth').value = this.params.depth; $('#lblDepth').textContent = fmt(this.params.depth);
-    $('#sRdown').value = this.params.rdown; $('#lblRdown').textContent = fmt(this.params.rdown);
-    $('#sRup').value   = this.params.rup;   $('#lblRup').textContent   = fmt(this.params.rup);
-    $('#sAvol').value  = this.params.avol;  $('#lblAvol').textContent  = fmt(this.params.avol);
+    // v5: replaced duck depth / ramp-down / ramp-up with a single fade-in length slider
+    const sf = $('#sFadeIn'); if (sf){ sf.value = this.fadeInSec; }
+    const lf = $('#lblFadeIn'); if (lf){ lf.textContent = fmt(this.fadeInSec); }
+    $('#sAvol').value = this.params.avol; $('#lblAvol').textContent = fmt(this.params.avol);
     this._updateClipLabel();
+    this._updateDropWarning();
+  },
+  // v5: warn when the drop is so early there isn't room for the full fade-in
+  _updateDropWarning(){
+    const el = $('#dropWarn'); if (!el) return;
+    if (!this.ann){ el.style.display = 'none'; return; }
+    const Tann = this.ann.duration;
+    if (this.dropPoint < Tann - 0.05){
+      const diff = (Tann - this.dropPoint).toFixed(1);
+      el.textContent = '⚠️ Drop is too early - about ' + diff + 's before the announcer would finish. Move the Drop later or use a shorter announcement.';
+      el.style.display = '';
+    } else {
+      el.style.display = 'none';
+    }
   },
   _updateClipLabel(){
     $('#lblClip').textContent = this._mmss(this.clipStart) + ' – ' + this._mmss(this.clipEnd);
@@ -1867,9 +1961,10 @@ const Mixer = {
     this.manualPoints = null; this.envCustom = false;
     this.draw();
   },
-  /* v4: one-tap auto-mix — scan the song's energy to find the most intense
-     ~30s (usually the chorus), snap the start to a rise, set the announcer
-     over the ducked opening, and shape the ramps. User tweaks from there. */
+  /* v5: auto-mix now finds the song's biggest energy rise as a "drop" candidate
+     and sets up the build-into-the-drop envelope. The mix is arranged so the
+     song begins at song-time max(0, dropPoint - T_ann), fades in over the
+     announcement, and arrives at full volume at the drop. */
   async autoMix(){
     if (!this.song){ toast('No song'); return; }
     toast('Analyzing song…');
@@ -1884,6 +1979,7 @@ const Mixer = {
       energy[i] = Math.sqrt(s / Math.max(1, (en-st)/4));
     }
     const dur = buf.duration;
+    // find the loudest 30s window (likely the chorus / drop region)
     const winLen = Math.min(Math.floor(30/hopSec), n);
     let best = 0, run = 0;
     for (let i = 0; i < winLen; i++) run += energy[i];
@@ -1892,43 +1988,45 @@ const Mixer = {
       run += energy[i+winLen-1] - energy[i-1];
       if (run > bestSum){ bestSum = run; best = i; }
     }
-    // snap the start to the strongest energy rise near the window start
+    // snap to the biggest energy rise near the window start = the drop
     const seek = Math.floor(2/hopSec);
     let snap = best, bestRise = -Infinity;
     for (let i = Math.max(1, best-seek); i <= Math.min(n-2, best+seek); i++){
       const rise = energy[i] - energy[i-1];
       if (rise > bestRise){ bestRise = rise; snap = i; }
     }
-    let cs = Math.max(0, snap*hopSec - 0.15);
-    let ce = Math.min(dur, cs + 30);
-    if (ce - cs < 10) cs = Math.max(0, ce - 30);
+    const dropPoint = Math.max(0, Math.min(dur, snap*hopSec - 0.05));
+    const Tann = this.ann ? this.ann.duration : 0;
+    const songStartOffset = Math.max(0, dropPoint - Tann);
+    let cs = songStartOffset;
+    let ce = Math.min(dur, cs + Math.max(30, Tann + 25));
+    if (ce - cs < 10) cs = Math.max(0, ce - (ce - cs + 5));
+    this.dropPoint = dropPoint;
+    this.fadeInSec = Math.max(0, Math.min(30, Tann));
     this.clipStart = cs; this.clipEnd = ce;
-    this.params.depth = 0.15; this.params.rdown = 0.3; this.params.rup = 0.8;
-    if (this.ann){
-      const hi = Math.max(cs, ce - this.ann.duration);
-      this.annStart = Math.min(cs + 0.6, hi);
-    }
+    this.annStart = cs; // announcement runs from mix-time 0
     this.manualPoints = null;
     this.envCustom = false;
     this._syncSliders();
+    this._renderStatic();
     this.draw();
-    toast('✨ Auto-mix ready — preview it, tweak anything, then save');
+    toast('✨ Auto-mix ready — drop will hit on the announcer\'s last word');
   },
   _autoEnvelopePoints(){
-    // v3: envelope spans the selected clip, not the whole song
+    // v5: NEW smart default - instead of ducking the song during the
+    // announcement, the song STARTS SILENT and FADES IN over the
+    // announcement, hitting full volume right as the announcer ends -
+    // which (because of the song-start-offset computed in autoMix / open)
+    // is exactly the song's "drop" point.
     const c0 = this.clipStart, c1 = this.clipEnd;
     if (!this.ann) return [{t:c0,v:1},{t:c1,v:1}];
-    const p = this.params;
-    const aStart = Math.max(c0, Math.min(this.annStart, c1));
-    const aEnd = Math.min(c1, aStart + this.ann.duration);
+    // Fade ends at announcement-end in mix-time; in song-time that's
+    // annStart + fadeInSec.
+    const fadeEnd = Math.min(c1, this.annStart + Math.max(0, this.fadeInSec));
     const pts = [];
-    pts.push({t: c0, v: 1});
-    pts.push({t: Math.max(c0, aStart - p.rdown), v: 1});
-    pts.push({t: aStart, v: p.depth});
-    pts.push({t: aEnd, v: p.depth});
-    pts.push({t: Math.min(c1, aEnd + p.rup), v: 1});
+    pts.push({t: c0, v: 0});
+    if (fadeEnd > c0) pts.push({t: fadeEnd, v: 1});
     pts.push({t: c1, v: 1});
-    // collapse exact duplicates by t
     return pts.filter((pt,i,arr)=> i===0 || pt.t > arr[i-1].t);
   },
   envelopePoints(){
@@ -1959,7 +2057,12 @@ const Mixer = {
       const wAnn = (this.ann.duration/dur)*w;
       // bg for the moveable region
       c.fillStyle = 'rgba(247,168,51,0.10)'; c.fillRect(xStart, annTop+2, Math.max(2, wAnn), annH-4);
-      this._drawWave(this.ann, xStart, wAnn, annTop+16, annH-22, '#ffa833');
+      // v5: blit the cached ann waveform instead of re-scanning the buffer every frame
+      if (this._annStatic){
+        c.drawImage(this._annStatic.canvas, xStart, annTop+16, this._annStatic.w, this._annStatic.h);
+      } else {
+        this._drawWave(this.ann, xStart, wAnn, annTop+16, annH-22, '#ffa833');
+      }
       // grab handle bar
       c.fillStyle = 'rgba(247,168,51,0.95)'; c.fillRect(xStart, annTop, 3, annH);
       c.fillRect(xStart + wAnn - 3, annTop, 3, annH);
@@ -1979,6 +2082,24 @@ const Mixer = {
       const x = (p.t/dur)*w, y = songTop + (1-p.v)*songH;
       c.beginPath(); c.arc(x, y, 6, 0, Math.PI*2); c.fill();
     });
+
+    // v5: drop marker - draggable vertical bar on the song waveform
+    if (typeof this.dropPoint === 'number' && dur > 0){
+      const dx = Math.max(0, Math.min(w, (this.dropPoint/dur)*w));
+      c.fillStyle = 'rgba(57,197,255,0.85)';
+      c.fillRect(dx-2, songTop, 4, songH);
+      // little label flag
+      c.fillStyle = '#39c5ff';
+      c.beginPath();
+      c.moveTo(dx, songTop);
+      c.lineTo(dx + 30, songTop);
+      c.lineTo(dx + 30, songTop + 14);
+      c.lineTo(dx, songTop + 14);
+      c.closePath(); c.fill();
+      c.fillStyle = '#031b29';
+      c.font = 'bold 10px -apple-system, sans-serif';
+      c.fillText('DROP', dx + 4, songTop + 11);
+    }
 
     // v3.1: playback position line across both the song and announcement lanes
     if (this.playhead != null && dur > 0){
@@ -2025,6 +2146,11 @@ const Mixer = {
         const cx0 = (this.clipStart/dur)*w, cx1 = (this.clipEnd/dur)*w;
         if (Math.abs(x - cx0) < 16) return { kind:'clipL' };
         if (Math.abs(x - cx1) < 16) return { kind:'clipR' };
+        // v5: drop marker
+        if (typeof this.dropPoint === 'number'){
+          const dx = (this.dropPoint/dur)*w;
+          if (Math.abs(x - dx) < 14) return { kind:'drop' };
+        }
       }
       // ann region first
       if (this.ann && y >= annTop && y <= annTop+annH){
@@ -2080,7 +2206,21 @@ const Mixer = {
       const {x,y} = getPt(ev);
       const {w,h,dur} = this.geom;
       const songTop = 10, songH = (h-20)*0.55;
-      if (this.dragTarget.kind === 'clipL'){
+      if (this.dragTarget.kind === 'drop'){
+        // v5: drag the drop marker - re-anchor clipStart so the drop still lands
+        // at mix-time = T_ann (i.e. clipStart = max(0, dropPoint - T_ann)).
+        const Tann = this.ann ? this.ann.duration : 0;
+        this.dropPoint = Math.max(0, Math.min(dur, (x/w)*dur));
+        const newStart = Math.max(0, this.dropPoint - Tann);
+        const oldLen = this.clipEnd - this.clipStart;
+        this.clipStart = Math.max(0, Math.min(newStart, Math.max(0, dur - 3)));
+        this.clipEnd = Math.min(dur, this.clipStart + oldLen);
+        if (this.clipEnd - this.clipStart < 3) this.clipEnd = Math.min(dur, this.clipStart + 3);
+        this.annStart = this.clipStart;
+        this.manualPoints = null; this.envCustom = false;
+        this._renderStatic();
+        this._updateDropWarning();
+      } else if (this.dragTarget.kind === 'clipL'){
         // v3: drag clip start
         this.clipStart = Math.max(0, Math.min(this.clipEnd - 3, (x/w)*dur));
         if (this.annStart < this.clipStart) this.annStart = this.clipStart;
@@ -2207,9 +2347,10 @@ const Mixer = {
     if (p.mixBlobId) await blobDel(p.mixBlobId);
     p.mixBlobId = uuid();
     await blobPut(p.mixBlobId, blob);
-    // v3.2: remember the mixer state for next time this player's mix is opened
+    // v3.2 + v5: also persist drop point + fade-in length
     p.mixSettings = {
       clipStart: this.clipStart, clipEnd: this.clipEnd, annStart: this.annStart,
+      dropPoint: this.dropPoint, fadeInSec: this.fadeInSec,
       params: { ...this.params },
       manualPoints: this.manualPoints ? this.manualPoints.map(pt => ({ t: pt.t, v: pt.v })) : null
     };
@@ -2685,10 +2826,12 @@ window.addEventListener('DOMContentLoaded', async () => {
     $('#bAnn').textContent = 'ready'; $('#bAnn').className='badge ok';
     toast('Announcement saved');
   });
+  /* v5: editor preview buttons go through the decoded-buffer cache too */
   $('#btnPlayWalk').addEventListener('click', async () => {
     const p = App.players.find(x=>x.id===App.editPlayerId);
     if (!p?.walkupBlobId) return toast('No file');
-    const buf = await decodeBlob(await blobGet(p.walkupBlobId));
+    const buf = await getDecodedBuffer(p.walkupBlobId);
+    if (!buf) return toast('No file');
     const ctx = audio(); const src = ctx.createBufferSource(); src.buffer=buf;
     src.connect(getLocalBus()); App.activeLocalNodes.add(src); src.start();
     src.onended = ()=> App.activeLocalNodes.delete(src);
@@ -2696,7 +2839,8 @@ window.addEventListener('DOMContentLoaded', async () => {
   $('#btnPlayAnn').addEventListener('click', async () => {
     const p = App.players.find(x=>x.id===App.editPlayerId);
     if (!p?.annBlobId) return toast('No file');
-    const buf = await decodeBlob(await blobGet(p.annBlobId));
+    const buf = await getDecodedBuffer(p.annBlobId);
+    if (!buf) return toast('No file');
     const ctx = audio(); const src = ctx.createBufferSource(); src.buffer=buf;
     src.connect(getLocalBus()); App.activeLocalNodes.add(src); src.start();
     src.onended = ()=> App.activeLocalNodes.delete(src);
@@ -2704,7 +2848,8 @@ window.addEventListener('DOMContentLoaded', async () => {
   $('#btnPlayMix').addEventListener('click', async () => {
     const p = App.players.find(x=>x.id===App.editPlayerId);
     if (!p?.mixBlobId) return toast('No mix yet');
-    const buf = await decodeBlob(await blobGet(p.mixBlobId));
+    const buf = await getDecodedBuffer(p.mixBlobId);
+    if (!buf) return toast('No mix yet');
     const ctx = audio(); const src = ctx.createBufferSource(); src.buffer=buf;
     src.connect(getLocalBus()); App.activeLocalNodes.add(src); src.start();
     src.onended = ()=> App.activeLocalNodes.delete(src);
@@ -2730,17 +2875,19 @@ window.addEventListener('DOMContentLoaded', async () => {
   // mixer modal
   $('#mixerClose').addEventListener('click', () => Mixer.close());
   $('#btnAutoMix').addEventListener('click', () => Mixer.autoMix());
-  for (const [id,k] of [['#sDepth','depth'],['#sRdown','rdown'],['#sRup','rup'],['#sAvol','avol']]){
-    $(id).addEventListener('input', e => {
-      Mixer.params[k] = parseFloat(e.target.value);
-      $('#lblDepth').textContent = fmt(Mixer.params.depth);
-      $('#lblRdown').textContent = fmt(Mixer.params.rdown);
-      $('#lblRup').textContent   = fmt(Mixer.params.rup);
-      $('#lblAvol').textContent  = fmt(Mixer.params.avol);
-      // sliders re-shape the duck envelope
-      Mixer.manualPoints = null; Mixer.envCustom = false; Mixer.draw();
-    });
-  }
+  // v5: new slider wiring - single fade-in length + announcement volume
+  $('#sFadeIn').addEventListener('input', e => {
+    Mixer.fadeInSec = parseFloat(e.target.value);
+    $('#lblFadeIn').textContent = fmt(Mixer.fadeInSec);
+    Mixer.manualPoints = null; Mixer.envCustom = false;
+    if (Mixer._updateDropWarning) Mixer._updateDropWarning();
+    Mixer.draw();
+  });
+  $('#sAvol').addEventListener('input', e => {
+    Mixer.params.avol = parseFloat(e.target.value);
+    $('#lblAvol').textContent = fmt(Mixer.params.avol);
+    Mixer.manualPoints = null; Mixer.envCustom = false; Mixer.draw();
+  });
   $('#btnPreviewMix').addEventListener('click', () => Mixer.preview());
   $('#btnStopPreviewMix').addEventListener('click', () => Mixer.stopPreview());
   $('#btnSaveMix').addEventListener('click', () => Mixer.saveMix());
