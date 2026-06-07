@@ -506,16 +506,12 @@
     </div>
 
     <div class="card" style="margin-bottom:10px">
-      <div class="h-title" style="margin-top:0">Playlist sections</div>
+      <div class="h-title" style="margin-top:0">Song sections</div>
       <div class="muted" style="font-size:12px; margin-bottom:8px">
-        Confirm or adjust where each section starts in the Softball 2026 playlist
-        (track index, 1-based). The list ends at the next section's start.
+        Every song in the playlist belongs to a section — move songs with the dropdown,
+        changes save instantly. Songs newly added to the playlist appear under "New / Unsorted".
       </div>
-      <div id="sectionsEditor"></div>
-      <div class="row" style="gap:8px; margin-top:8px">
-        <button class="btn small primary" id="btnSaveSections">Save</button>
-        <button class="btn small ghost" id="btnResetSections">Reset to defaults</button>
-      </div>
+      <div id="songManager" style="max-height: 50vh; overflow-y: auto"></div>
     </div>
 
     <div class="card">
@@ -615,10 +611,7 @@
     </div>
 
     <div class="mixer-toolbar">
-      <div class="mode-toggle" id="modeToggle">
-        <button class="on" data-mode="auto">Auto-duck</button>
-        <button data-mode="manual">Advanced</button>
-      </div>
+      <button class="btn small" id="btnAutoMix">&#10024; Auto-mix</button>
       <div class="row" style="gap:8px; justify-content:flex-end">
         <button class="btn small" id="btnPreviewMix">▶︎ Preview</button>
         <button class="btn small ghost" id="btnStopPreviewMix">■ Stop</button>
@@ -658,8 +651,8 @@
       Drag the <span style="color:#2ee066">green</span> edge handles on the song to choose the clip
       that plays (defaults to the first 30 seconds).
       Drag the <span style="color:#ffa833">orange</span> announcement bar to set when it kicks in.
-      In <em>Advanced</em>, tap an empty spot on the song envelope to add a point, drag to move,
-      double-tap an existing point to remove it.
+      Tap an empty spot on the song envelope to add a point, drag to move, double-tap a point
+      to remove it. &#10024; Auto-mix finds the chorus and sets everything up — tweak from there.
     </div>
   </div>
 </div>
@@ -739,7 +732,7 @@ async function dbDel(store, id){
 async function kvGet(k, dflt=null){ const v = await dbGet('kv', k); return v? v.value : dflt; }
 async function kvSet(k, v){
   await dbPutRaw('kv', { id:k, value:v });
-  if (typeof Cloud!=='undefined' && ['sections','shuffle','ttsAnnounce','spotify_token'].includes(k)) Cloud.schedule();
+  if (typeof Cloud!=='undefined' && ['sections','section_assignments','shuffle','ttsAnnounce','spotify_token'].includes(k)) Cloud.schedule();
 }
 async function blobPut(id, blob){ await dbPutRaw('blobs', { id, blob }); }
 async function blobGet(id){ const r = await dbGet('blobs', id); return r? r.blob : null; }
@@ -1117,6 +1110,8 @@ const Spotify = {
 const App = {
   tab: 'music',
   sections: null,
+  playlist: null,      // v4: cached Softball 2026 playlist
+  assignments: {},     // v4: { trackUri: sectionId }
   pads: [],          // {id,label,blobId}
   players: [],       // {id, name, num, teamId, walkupBlobId, annBlobId, mixBlobId}
   teams: [],         // {id, name, logoBlobId, order}  (v3)
@@ -1136,6 +1131,7 @@ const App = {
 
   async load(){
     this.sections = (await kvGet('sections')) || DEFAULT_SECTIONS.slice();
+    this.assignments = (await kvGet('section_assignments')) || {};
     this.pads = await dbAll('pads');
     this.players = await dbAll('players');
     this.players.sort((a,b)=> (a.order??0) - (b.order??0));
@@ -1261,54 +1257,96 @@ const App = {
     $$('section.tab').forEach(s => s.classList.toggle('active', s.id === 'tab-'+t));
   },
 
-  /* -------- MUSIC -------- */
+  /* -------- MUSIC (v4: sections are per-song assignments) -------- */
+  async ensureAssignments(pl){
+    if (!pl) return 0;
+    let a = this.assignments || {};
+    if (!Object.keys(a).length){
+      // first run: derive from the legacy start-index ranges
+      const sorted = this.sections.slice().sort((x,y)=>(x.start||1)-(y.start||1));
+      pl.tracks.forEach((t, i) => {
+        let sid = sorted[0].id;
+        for (const s of sorted){ if (i+1 >= (s.start||1)) sid = s.id; }
+        a[t.uri] = sid;
+      });
+      this.assignments = a;
+      await kvSet('section_assignments', a);
+    }
+    return pl.tracks.filter(t => !a[t.uri]).length;
+  },
+  sectionTracks(id){
+    const pl = this.playlist; if (!pl) return [];
+    const a = this.assignments || {};
+    return id === '__unsorted'
+      ? pl.tracks.filter(t => !a[t.uri])
+      : pl.tracks.filter(t => a[t.uri] === id);
+  },
   renderSections(playlist){
+    if (playlist) this.playlist = playlist;
+    const pl = this.playlist;
     const grid = $('#sectionGrid'); grid.innerHTML = '';
-    const total = playlist ? playlist.tracks.length : 165;
-    this.sections.forEach((s, i) => {
-      const next = this.sections[i+1];
-      const end = next ? next.start-1 : total;
+    this.sections.forEach((s) => {
+      const count = pl ? this.sectionTracks(s.id).length : null;
       const btn = document.createElement('button');
       btn.className = 'section-btn ' + s.themeClass;
-      btn.innerHTML = `<div class="lbl">${s.label}</div><div class="meta">Tracks ${s.start}–${end} · ${end-s.start+1} songs · tap to browse</div>`;
-      btn.addEventListener('click', () => this.openSectionSongs(i));
+      btn.innerHTML = `<div class="lbl">${s.label}</div><div class="meta">${count==null ? '' : count + ' songs · '}tap to browse</div>`;
+      btn.addEventListener('click', () => this.openSectionSongs(s.id));
       grid.appendChild(btn);
     });
+    if (pl){
+      const un = this.sectionTracks('__unsorted');
+      if (un.length){
+        const btn = document.createElement('button');
+        btn.className = 'section-btn';
+        btn.innerHTML = `<div class="lbl">🆕 New / Unsorted</div><div class="meta">${un.length} song${un.length===1?'':'s'} · assign in ⚙ settings</div>`;
+        btn.addEventListener('click', () => this.openSectionSongs('__unsorted'));
+        grid.appendChild(btn);
+      }
+    }
   },
-  async playSection(i){
+  _sectionLabel(id){
+    if (id === '__unsorted') return 'New / Unsorted';
+    const s = this.sections.find(x=>x.id===id);
+    return s ? s.label : 'Section';
+  },
+  async playSection(id){
     if (!Spotify.token){ toast('Connect Spotify first'); return; }
     try{
       const pl = await Spotify.getSoftballPlaylist();
-      if (this.shuffle) await Spotify.setShuffle(true);
-      else await Spotify.setShuffle(false);
-      const start = this.sections[i].start - 1; // 0-based
-      await Spotify.playPlaylistFrom(pl.uri, start);
-      toast('▶︎ ' + this.sections[i].label);
+      this.playlist = pl;
+      const tracks = this.sectionTracks(id);
+      if (!tracks.length){ toast('No songs in this section'); return; }
+      let uris = tracks.map(t => t.uri);
+      if (this.shuffle){
+        for (let i = uris.length-1; i > 0; i--){
+          const j = Math.floor(Math.random()*(i+1));
+          [uris[i], uris[j]] = [uris[j], uris[i]];
+        }
+      }
+      await Spotify.setShuffle(false);
+      await Spotify.play(uris, 0);
+      toast('▶︎ ' + this._sectionLabel(id));
     }catch(e){ console.error(e); toast('Playback failed — '+e.message); }
   },
-  /* v2: tap a section -> browse its songs, tap a song to play exactly that one */
-  async openSectionSongs(i){
+  /* tap a section -> browse its songs, tap a song to play exactly that one */
+  async openSectionSongs(id){
     if (!Spotify.token){ toast('Connect Spotify first'); return; }
-    let pl;
-    try{ pl = await Spotify.getSoftballPlaylist(); }
+    try{ this.playlist = await Spotify.getSoftballPlaylist(); }
     catch(e){ console.error(e); toast(e.message); return; }
-    const s = this.sections[i];
-    const next = this.sections[i+1];
-    const startIdx = Math.max(0, (s.start||1) - 1);
-    const endIdx = next ? Math.min(pl.tracks.length, next.start-1) : pl.tracks.length;
-    $('#songsTitle').textContent = s.label;
+    const tracks = this.sectionTracks(id);
+    $('#songsTitle').textContent = this._sectionLabel(id);
     const list = $('#songsList'); list.innerHTML = '';
-    pl.tracks.slice(startIdx, endIdx).forEach((t, k) => {
-      const abs = startIdx + k;
+    const uris = tracks.map(t => t.uri);
+    tracks.forEach((t, k) => {
       const row = document.createElement('button');
       row.className = 'song-row';
-      row.innerHTML = `<span class="idx">${abs+1}</span>` +
+      row.innerHTML = `<span class="idx">${k+1}</span>` +
         `<span class="t"><div class="n">${escapeHtml(t.name)}</div><div class="a">${escapeHtml(t.artist)}</div></span>` +
         `<span class="go">▶︎</span>`;
       row.addEventListener('click', async () => {
         try{
           await Spotify.setShuffle(false);
-          await Spotify.playPlaylistFrom(pl.uri, abs);
+          await Spotify.play(uris, k);
           $('#modalSongs').classList.remove('open');
           toast('▶︎ ' + t.name);
         }catch(e){ console.error(e); toast('Playback failed — '+e.message); }
@@ -1317,7 +1355,7 @@ const App = {
     });
     $('#btnPlaySection').onclick = () => {
       $('#modalSongs').classList.remove('open');
-      this.playSection(i);
+      this.playSection(id);
     };
     $('#modalSongs').classList.add('open');
   },
@@ -1701,7 +1739,7 @@ const Mixer = {
   annStart: 1.0,        // seconds — when announcement enters
   clipStart: 0,         // v3: selected portion of the song
   clipEnd: 30,
-  mode: 'auto',
+  envCustom: false,     // v4: true once the user hand-edits the envelope
   params: { depth:0.20, rdown:0.5, rup:1.0, avol:1.0 },
   manualPoints: null,   // array of {t,v} for advanced mode (over song duration)
   previewNodes: { song:null, ann:null, gSong:null, gAnn:null, startedAt:0 },
@@ -1732,19 +1770,18 @@ const Mixer = {
       this.clipEnd = Math.max(this.clipStart + 3, Math.min(ms.clipEnd, songDur));
       this.annStart = Math.max(this.clipStart, Math.min((typeof ms.annStart === 'number' ? ms.annStart : this.clipStart), this.clipEnd));
       this.params = Object.assign({}, this.params, ms.params || {});
-      this.mode = (ms.mode === 'manual' && Array.isArray(ms.manualPoints) && ms.manualPoints.length >= 2) ? 'manual' : 'auto';
-      this.manualPoints = this.mode === 'manual'
+      this.manualPoints = (Array.isArray(ms.manualPoints) && ms.manualPoints.length >= 2)
         ? ms.manualPoints.map(pt => ({ t: Math.max(this.clipStart, Math.min(this.clipEnd, pt.t)), v: Math.max(0, Math.min(1, pt.v)) }))
         : null;
+      this.envCustom = !!this.manualPoints;
       toast('Restored your last mix settings');
     } else {
       this.clipStart = 0;
       this.clipEnd = Math.min(30, songDur);
       this.annStart = this.clipStart + Math.min((this.clipEnd - this.clipStart) * 0.2, 4);
-      this.mode = 'auto';
-      this.manualPoints = null; // start clean in auto
+      this.manualPoints = null;
+      this.envCustom = false;
     }
-    $$('#modeToggle button').forEach(b => b.classList.toggle('on', b.dataset.mode === this.mode));
     this.canvas = $('#mixCanvas'); this.ctx = this.canvas.getContext('2d');
     this._fitCanvas();
     this._bindCanvas();
@@ -1809,7 +1846,7 @@ const Mixer = {
     if (this.annStart < start) this.annStart = start;
     const hi = Math.max(start, end - (this.ann ? this.ann.duration : 0));
     if (this.annStart > hi) this.annStart = hi;
-    this.manualPoints = null;
+    this.manualPoints = null; this.envCustom = false;
     this.draw();
   },
   _parseTime(s){
@@ -1827,18 +1864,55 @@ const Mixer = {
     if (!this.song) return;
     this.clipStart = 0;
     this.clipEnd = this.song.duration;
-    this.manualPoints = null;
+    this.manualPoints = null; this.envCustom = false;
     this.draw();
   },
-  setMode(m){
-    if (m === this.mode) return;
-    this.mode = m;
-    $$('#modeToggle button').forEach(b => b.classList.toggle('on', b.dataset.mode === m));
-    if (m === 'manual' && !this.manualPoints){
-      // initialize manualPoints from the current auto-envelope so user can refine
-      this.manualPoints = this._autoEnvelopePoints();
+  /* v4: one-tap auto-mix — scan the song's energy to find the most intense
+     ~30s (usually the chorus), snap the start to a rise, set the announcer
+     over the ducked opening, and shape the ramps. User tweaks from there. */
+  async autoMix(){
+    if (!this.song){ toast('No song'); return; }
+    toast('Analyzing song…');
+    await sleep(30);
+    const buf = this.song, sr = buf.sampleRate, data = buf.getChannelData(0);
+    const hopSec = 0.25, hop = Math.floor(sr * hopSec);
+    const n = Math.max(1, Math.floor(data.length / hop));
+    const energy = new Float32Array(n);
+    for (let i = 0; i < n; i++){
+      let s = 0; const st = i*hop, en = Math.min(data.length, st+hop);
+      for (let j = st; j < en; j += 4) s += data[j]*data[j];
+      energy[i] = Math.sqrt(s / Math.max(1, (en-st)/4));
     }
+    const dur = buf.duration;
+    const winLen = Math.min(Math.floor(30/hopSec), n);
+    let best = 0, run = 0;
+    for (let i = 0; i < winLen; i++) run += energy[i];
+    let bestSum = run;
+    for (let i = 1; i + winLen <= n; i++){
+      run += energy[i+winLen-1] - energy[i-1];
+      if (run > bestSum){ bestSum = run; best = i; }
+    }
+    // snap the start to the strongest energy rise near the window start
+    const seek = Math.floor(2/hopSec);
+    let snap = best, bestRise = -Infinity;
+    for (let i = Math.max(1, best-seek); i <= Math.min(n-2, best+seek); i++){
+      const rise = energy[i] - energy[i-1];
+      if (rise > bestRise){ bestRise = rise; snap = i; }
+    }
+    let cs = Math.max(0, snap*hopSec - 0.15);
+    let ce = Math.min(dur, cs + 30);
+    if (ce - cs < 10) cs = Math.max(0, ce - 30);
+    this.clipStart = cs; this.clipEnd = ce;
+    this.params.depth = 0.15; this.params.rdown = 0.3; this.params.rup = 0.8;
+    if (this.ann){
+      const hi = Math.max(cs, ce - this.ann.duration);
+      this.annStart = Math.min(cs + 0.6, hi);
+    }
+    this.manualPoints = null;
+    this.envCustom = false;
+    this._syncSliders();
     this.draw();
+    toast('✨ Auto-mix ready — preview it, tweak anything, then save');
   },
   _autoEnvelopePoints(){
     // v3: envelope spans the selected clip, not the whole song
@@ -1858,7 +1932,7 @@ const Mixer = {
     return pts.filter((pt,i,arr)=> i===0 || pt.t > arr[i-1].t);
   },
   envelopePoints(){
-    return this.mode==='manual' && this.manualPoints ? this.manualPoints : this._autoEnvelopePoints();
+    return this.manualPoints ? this.manualPoints : this._autoEnvelopePoints();
   },
   draw(){
     const c = this.ctx; if (!c) return;
@@ -1900,13 +1974,11 @@ const Mixer = {
       if (i===0) c.moveTo(x,y); else c.lineTo(x,y);
     });
     c.stroke();
-    if (this.mode==='manual'){
-      c.fillStyle = '#39c5ff';
-      pts.forEach(p => {
-        const x = (p.t/dur)*w, y = songTop + (1-p.v)*songH;
-        c.beginPath(); c.arc(x, y, 6, 0, Math.PI*2); c.fill();
-      });
-    }
+    c.fillStyle = '#39c5ff';
+    pts.forEach(p => {
+      const x = (p.t/dur)*w, y = songTop + (1-p.v)*songH;
+      c.beginPath(); c.arc(x, y, 6, 0, Math.PI*2); c.fill();
+    });
 
     // v3.1: playback position line across both the song and announcement lanes
     if (this.playhead != null && dur > 0){
@@ -1960,12 +2032,15 @@ const Mixer = {
         const wAnn = (this.ann.duration/dur)*w;
         if (x >= xStart && x <= xStart + wAnn) return { kind:'ann', offset: x - xStart };
       }
-      // env points (manual mode)
-      if (this.mode==='manual'){
+      // envelope points — always editable (v4)
+      {
         const pts = this.envelopePoints();
         for (let i=0;i<pts.length;i++){
           const px = (pts[i].t/dur)*w, py = songTop + (1-pts[i].v)*songH;
-          if ((px-x)*(px-x) + (py-y)*(py-y) < 14*14) return { kind:'pt', idx:i };
+          if ((px-x)*(px-x) + (py-y)*(py-y) < 14*14){
+            if (!this.manualPoints) this.manualPoints = pts.map(p => ({ t: p.t, v: p.v }));
+            return { kind:'pt', idx:i };
+          }
         }
         // empty area in song region -> create a new point (within the clip)
         if (y >= songTop && y <= songTop + songH){
@@ -1975,6 +2050,7 @@ const Mixer = {
           const ip = this.manualPoints.findIndex(p => p.t > t);
           const idx = ip < 0 ? this.manualPoints.length : ip;
           this.manualPoints.splice(idx, 0, { t, v });
+          this.envCustom = true;
           this.draw();
           return { kind:'pt', idx };
         }
@@ -1985,13 +2061,15 @@ const Mixer = {
       ev.preventDefault();
       const {x,y} = getPt(ev);
       this.dragTarget = hitTest(x,y);
-      // double-tap to delete in manual
-      if (this.dragTarget && this.dragTarget.kind==='pt' && this.mode==='manual'){
+      // double-tap a point to delete it (endpoints stay)
+      if (this.dragTarget && this.dragTarget.kind==='pt'){
         const now = Date.now();
         if (this._lastTap && (now - this._lastTap) < 280 && this._lastTapIdx === this.dragTarget.idx){
-          // remove (but keep endpoints)
           const i = this.dragTarget.idx;
-          if (i>0 && i<this.manualPoints.length-1){ this.manualPoints.splice(i,1); this.dragTarget=null; this.draw(); return; }
+          if (this.manualPoints && i>0 && i<this.manualPoints.length-1){
+            this.manualPoints.splice(i,1); this.envCustom = true;
+            this.dragTarget=null; this.draw(); return;
+          }
         }
         this._lastTap = now; this._lastTapIdx = this.dragTarget.idx;
       }
@@ -2006,16 +2084,17 @@ const Mixer = {
         // v3: drag clip start
         this.clipStart = Math.max(0, Math.min(this.clipEnd - 3, (x/w)*dur));
         if (this.annStart < this.clipStart) this.annStart = this.clipStart;
-        this.manualPoints = null;
+        this.manualPoints = null; this.envCustom = false;
       } else if (this.dragTarget.kind === 'clipR'){
         // v3: drag clip end
         this.clipEnd = Math.max(this.clipStart + 3, Math.min(dur, (x/w)*dur));
-        this.manualPoints = null;
+        this.manualPoints = null; this.envCustom = false;
       } else if (this.dragTarget.kind === 'ann'){
         const xStart = Math.max(0, Math.min(w - (this.ann.duration/dur)*w, x - (this.dragTarget.offset||0)));
         const hi = Math.max(this.clipStart, this.clipEnd - this.ann.duration);
         this.annStart = Math.max(this.clipStart, Math.min(hi, (xStart/w)*dur));
       } else if (this.dragTarget.kind === 'pt'){
+        this.envCustom = true;
         const i = this.dragTarget.idx;
         const pts = this.manualPoints;
         if (!pts){ this.draw(); return; }
@@ -2131,7 +2210,7 @@ const Mixer = {
     // v3.2: remember the mixer state for next time this player's mix is opened
     p.mixSettings = {
       clipStart: this.clipStart, clipEnd: this.clipEnd, annStart: this.annStart,
-      mode: this.mode, params: { ...this.params },
+      params: { ...this.params },
       manualPoints: this.manualPoints ? this.manualPoints.map(pt => ({ t: pt.t, v: pt.v })) : null
     };
     await dbPut('players', p);
@@ -2182,23 +2261,46 @@ function encodeWav(audioBuffer){
 /* ============================================================================
    ADMIN UI — sections editor, wipe, etc.
    ========================================================================= */
-function renderSectionsEditor(){
-  const wrap = $('#sectionsEditor'); wrap.innerHTML = '';
-  App.sections.forEach((s, idx) => {
-    const row = document.createElement('div');
-    row.className = 'row'; row.style.gap = '8px'; row.style.marginBottom='6px';
-    row.innerHTML = `
-      <input type="text" value="${escapeHtml(s.label)}" data-k="label" style="flex:2">
-      <input type="number" value="${s.start}" data-k="start" style="flex:1; max-width: 90px">
-    `;
-    row.querySelectorAll('input').forEach(inp => {
-      inp.addEventListener('change', () => {
-        const k = inp.dataset.k;
-        App.sections[idx][k] = k==='start' ? parseInt(inp.value,10) || 1 : inp.value;
+function renderSongManager(){
+  const wrap = $('#songManager'); wrap.innerHTML = '';
+  const pl = App.playlist;
+  if (!pl){
+    wrap.innerHTML = '<div class="muted" style="font-size:13px">Connect Spotify and load the playlist to manage song sections.</div>';
+    return;
+  }
+  const a = App.assignments || {};
+  const opts = App.sections.map(s => `<option value="${s.id}">${escapeHtml(s.label)}</option>`).join('');
+  const groups = [{ id:'__unsorted', label:'🆕 New / Unsorted' }, ...App.sections.map(s => ({ id:s.id, label:s.label }))];
+  for (const g of groups){
+    const tracks = App.sectionTracks(g.id);
+    if (g.id === '__unsorted' && !tracks.length) continue;
+    const head = document.createElement('div');
+    head.className = 'h-title'; head.style.marginTop = '12px';
+    head.textContent = g.label + ' · ' + tracks.length;
+    wrap.appendChild(head);
+    tracks.forEach(t => {
+      const row = document.createElement('div');
+      row.className = 'row'; row.style.gap = '8px'; row.style.marginBottom = '6px';
+      row.innerHTML =
+        `<div style="flex:1; min-width:0">` +
+          `<div style="font-size:13px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis">${escapeHtml(t.name)}</div>` +
+          `<div class="muted" style="font-size:11px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis">${escapeHtml(t.artist)}</div>` +
+        `</div>` +
+        `<select style="flex:0 0 150px; padding:8px">` +
+          (g.id === '__unsorted' ? '<option value="" selected>— assign —</option>' : '') + opts +
+        `</select>`;
+      const sel = row.querySelector('select');
+      if (g.id !== '__unsorted') sel.value = g.id;
+      sel.addEventListener('change', async () => {
+        if (!sel.value) return;
+        App.assignments[t.uri] = sel.value;
+        await kvSet('section_assignments', App.assignments);
+        App.renderSections();
+        renderSongManager();
       });
+      wrap.appendChild(row);
     });
-    wrap.appendChild(row);
-  });
+  }
 }
 async function wipeAll(){
   if (!confirm('Wipe all local data (pads, lineup, mix files, Spotify token)? This cannot be undone.')) return;
@@ -2354,7 +2456,7 @@ const Cloud = {
           updated_at: new Date(pad.updatedAt || Date.now()).toISOString()
         });
       }
-      const cfg = { sections: App.sections, shuffle: App.shuffle, ttsAnnounce: App.ttsAnnounce };
+      const cfg = { sections: App.sections, assignments: App.assignments, shuffle: App.shuffle, ttsAnnounce: App.ttsAnnounce };
       await this.sb.from('dugout_settings').upsert({
         user_id: this.user.id,
         spotify_refresh_token: Spotify.refresh || null,
@@ -2387,6 +2489,10 @@ const Cloud = {
         if (st.config && st.config.sections && !(await kvGet('sections'))){
           App.sections = st.config.sections;
           await dbPutRaw('kv', { id:'sections', value: App.sections });
+        }
+        if (st.config && st.config.assignments && !Object.keys(App.assignments || {}).length){
+          App.assignments = st.config.assignments;
+          await dbPutRaw('kv', { id:'section_assignments', value: App.assignments });
         }
         if (st.spotify_refresh_token && !Spotify.token){
           Spotify.refresh = st.spotify_refresh_token;
@@ -2497,28 +2603,18 @@ window.addEventListener('DOMContentLoaded', async () => {
     toast('Reloading playlist…');
     try{
       const pl = await Spotify.getSoftballPlaylist(true);
+      const unsorted = await App.ensureAssignments(pl);
       App.renderSections(pl);
-      toast('Playlist loaded · ' + pl.tracks.length + ' tracks');
+      toast('Playlist loaded · ' + pl.tracks.length + ' tracks' + (unsorted ? ' · ' + unsorted + ' new — assign in ⚙' : ''));
     }catch(e){ console.error(e); toast(e.message); }
   });
 
   // admin
-  $('#btnAdmin').addEventListener('click', () => { renderSectionsEditor(); $('#modalAdmin').classList.add('open'); });
+  $('#btnAdmin').addEventListener('click', () => { renderSongManager(); $('#modalAdmin').classList.add('open'); });
   $('#adminClose').addEventListener('click', () => $('#modalAdmin').classList.remove('open'));
   $('#btnSpotifyLogin').addEventListener('click', () => Spotify.login());
   $('#btnSpotifyLogout').addEventListener('click', () => Spotify.logout());
   $('#btnTransfer').addEventListener('click', () => Spotify.transfer(false).then(()=>toast('Transferred')));
-  $('#btnSaveSections').addEventListener('click', async () => {
-    App.sections.sort((a,b)=>a.start-b.start);
-    await kvSet('sections', App.sections);
-    App.renderSections();
-    toast('Sections saved');
-  });
-  $('#btnResetSections').addEventListener('click', async () => {
-    App.sections = DEFAULT_SECTIONS.slice();
-    await kvSet('sections', App.sections);
-    renderSectionsEditor(); App.renderSections();
-  });
   $('#btnWipe').addEventListener('click', wipeAll);
 
   // cloud account (v2)
@@ -2633,7 +2729,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 
   // mixer modal
   $('#mixerClose').addEventListener('click', () => Mixer.close());
-  $$('#modeToggle button').forEach(b => b.addEventListener('click', () => Mixer.setMode(b.dataset.mode)));
+  $('#btnAutoMix').addEventListener('click', () => Mixer.autoMix());
   for (const [id,k] of [['#sDepth','depth'],['#sRdown','rdown'],['#sRup','rup'],['#sAvol','avol']]){
     $(id).addEventListener('input', e => {
       Mixer.params[k] = parseFloat(e.target.value);
@@ -2641,8 +2737,8 @@ window.addEventListener('DOMContentLoaded', async () => {
       $('#lblRdown').textContent = fmt(Mixer.params.rdown);
       $('#lblRup').textContent   = fmt(Mixer.params.rup);
       $('#lblAvol').textContent  = fmt(Mixer.params.avol);
-      // if user moves sliders we recompute auto envelope
-      if (Mixer.mode === 'auto'){ Mixer.draw(); }
+      // sliders re-shape the duck envelope
+      Mixer.manualPoints = null; Mixer.envCustom = false; Mixer.draw();
     });
   }
   $('#btnPreviewMix').addEventListener('click', () => Mixer.preview());
@@ -2678,6 +2774,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   if (Spotify.token){
     try{
       const pl = await Spotify.getSoftballPlaylist();
+      await App.ensureAssignments(pl);
       App.renderSections(pl);
     }catch(e){ /* may simply not be loaded yet */ }
   }
