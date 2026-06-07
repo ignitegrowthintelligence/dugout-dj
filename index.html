@@ -145,6 +145,76 @@
   label.field > span { font-size: 12px; color: var(--text-dim); margin-bottom: 4px; display:block; }
 
   /* ---- music tab ---- */
+  /* v6: Today's Set strip */
+  .ts-wrap { margin-bottom: 16px; }
+  .ts-head { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px; }
+  .ts-head-actions { display:flex; align-items:center; gap:6px; }
+  .ts-iconbtn {
+    width: 32px; height: 32px; border-radius: 10px; background: var(--bg-3);
+    border: 1px solid var(--line); color: var(--text-dim);
+    display:inline-flex; align-items:center; justify-content:center; font-size: 14px;
+  }
+  .ts-iconbtn:active { transform: scale(.96); }
+  .ts-empty {
+    background: var(--bg-3); border:1px dashed var(--line); border-radius: var(--r-md);
+    padding: 14px; font-size: 12px; text-align:center;
+  }
+  .ts-strip {
+    display:flex; gap: 10px; overflow-x: auto; overflow-y: hidden;
+    padding: 4px 2px 10px; scroll-snap-type: x proximity;
+    -webkit-overflow-scrolling: touch; scrollbar-width: thin;
+  }
+  .ts-strip::-webkit-scrollbar { height: 6px; }
+  .ts-card {
+    flex: 0 0 132px; scroll-snap-align: start;
+    background: var(--surface); border: 1px solid var(--line); border-radius: 14px;
+    padding: 8px; position: relative; display:flex; flex-direction:column;
+    user-select: none; -webkit-user-select: none; touch-action: manipulation;
+    transition: transform .12s ease, box-shadow .12s ease;
+  }
+  .ts-card:active { transform: scale(.97); }
+  .ts-card.next { box-shadow: 0 0 0 2px var(--accent); }
+  .ts-card.locked { border-color: #f0b328; }
+  .ts-card .ts-art {
+    width: 100%; aspect-ratio: 1 / 1; border-radius: 10px;
+    background: #000 center/cover no-repeat;
+    border: 1px solid var(--line); position: relative; margin-bottom: 6px;
+  }
+  .ts-card .ts-slot {
+    position: absolute; left: 4px; top: 4px;
+    background: rgba(0,0,0,.6); color: var(--text);
+    font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 999px;
+  }
+  .ts-card .ts-lock {
+    position: absolute; right: 4px; top: 4px;
+    background: rgba(0,0,0,.6); font-size: 11px; padding: 2px 4px; border-radius: 999px;
+  }
+  .ts-card .ts-title {
+    font-weight: 700; font-size: 12px; line-height: 1.2;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .ts-card .ts-artist {
+    font-size: 11px; color: var(--text-dim); line-height: 1.2;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 6px;
+  }
+  .ts-card .ts-row {
+    display:flex; align-items:center; justify-content: space-between; gap: 6px;
+    margin-top: auto;
+  }
+  .ts-card .ts-energy {
+    font-size: 9px; font-weight: 700; padding: 2px 6px; border-radius: 999px;
+    letter-spacing: .4px; text-transform: uppercase;
+  }
+  .ts-card .ts-energy-lo  { background: #2b3a4a; color: #9cc7f0; }
+  .ts-card .ts-energy-mid { background: #2c3a2e; color: #8ddc9e; }
+  .ts-card .ts-energy-hi  { background: #3a2722; color: #ff957e; }
+  .ts-card .ts-reroll {
+    width: 22px; height: 22px; border-radius: 999px;
+    background: var(--bg-3); border:1px solid var(--line); color: var(--text-dim);
+    font-size: 12px; display:inline-flex; align-items:center; justify-content:center;
+  }
+  .ts-card .ts-reroll:active { transform: scale(.92); }
+
   .section-grid { display:grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   .section-btn {
     min-height: 84px; border-radius: var(--r-md); padding: 14px;
@@ -398,6 +468,20 @@
         <button class="btn" id="trNext">⏭</button>
         <button class="btn" id="trShuffle" title="Shuffle within section">⇋</button>
       </div>
+    </div>
+
+    <!-- v6: Today's Set strip -->
+    <div id="todaysSetWrap" class="ts-wrap">
+      <div class="ts-head">
+        <div class="h-title" style="margin:0">Today's Set</div>
+        <div class="ts-head-actions">
+          <button class="ts-iconbtn" id="btnTSSettings" title="Set size">⚙</button>
+          <button class="ts-iconbtn" id="btnTSRefreshAll" title="Refresh all (keep locks)">⟳</button>
+          <button class="btn small primary" id="btnTSGenerate">+ Generate</button>
+        </div>
+      </div>
+      <div class="ts-strip" id="todaysSetStrip"></div>
+      <div class="ts-empty muted" id="todaysSetEmpty">Tap “Generate Today's Set” to spin up a fresh 7-song arc.</div>
     </div>
 
     <div class="h-title">Sections — Softball 2026</div>
@@ -685,8 +769,10 @@ function toast(msg, ms=2200){
 
 /* ---------- IndexedDB layer ---------- */
 const DB_NAME = 'dugoutdj';
-const DB_VER  = 2;
-const STORES = ['kv','pads','players','blobs','teams']; // blobs: audio files keyed by id
+const DB_VER  = 3;
+// v6: + play_log (per-song play events), games (a "game" is a generated
+// Today's Set scope), audio_features (Spotify track features cache).
+const STORES = ['kv','pads','players','blobs','teams','play_log','games','audio_features'];
 let _db = null;
 function openDB(){
   return new Promise((resolve,reject)=>{
@@ -714,10 +800,14 @@ function dbPutRaw(store, val){ return new Promise((res,rej)=>{ const r = tx(stor
 function dbDelRaw(store, id){ return new Promise((res,rej)=>{ const r = tx(store,'readwrite').delete(id); r.onsuccess=()=>res(); r.onerror=()=>rej(r.error); }); }
 function dbAll(store){ return new Promise((res,rej)=>{ const r = tx(store).getAll(); r.onsuccess=()=>res(r.result||[]); r.onerror=()=>rej(r.error); }); }
 /* v2: writes stamp updatedAt and nudge the cloud sync */
+/* v6: play_log/games/audio_features piggyback on the existing settings.config
+   blob (see Cloud.syncUp), so writes to those stores just schedule the
+   debounced settings push. No new Supabase tables required. */
 async function dbPut(store, val){
   if (store==='players' || store==='pads' || store==='teams') val.updatedAt = Date.now();
   await dbPutRaw(store, val);
-  if ((store==='players' || store==='pads' || store==='teams') && typeof Cloud!=='undefined') Cloud.schedule();
+  const syncable = ['players','pads','teams','play_log','games','audio_features'];
+  if (syncable.includes(store) && typeof Cloud!=='undefined') Cloud.schedule();
 }
 async function dbDel(store, id){
   await dbDelRaw(store, id);
@@ -725,6 +815,9 @@ async function dbDel(store, id){
     if (store==='players') Cloud.deleteRow('dugout_players', id);
     if (store==='pads')    Cloud.deleteRow('dugout_pads', id);
     if (store==='teams')   Cloud.deleteRow('dugout_teams', id);
+    // play_log/games/audio_features are scoped under settings.config — a
+    // re-push of the whole blob next sync window is enough
+    if (['play_log','games','audio_features'].includes(store)) Cloud.schedule();
   }
 }
 async function kvGet(k, dflt=null){ const v = await dbGet('kv', k); return v? v.value : dflt; }
@@ -1112,7 +1205,12 @@ const Spotify = {
     const cacheKey = 'softball_playlist_cache';
     if (!forceRefresh){
       const c = await kvGet(cacheKey);
-      if (c) return c;
+      if (c){
+        // v6: ensure cached entries have an image field (older caches don't).
+        // If any are missing we'll trigger a refresh.
+        const needs = (c.tracks||[]).some(t => typeof t.image === 'undefined');
+        if (!needs) return c;
+      }
     }
     // Find playlist by name in user's playlists
     let url = `/me/playlists?limit=50`;
@@ -1124,20 +1222,83 @@ const Spotify = {
       url = j.next ? j.next.replace('https://api.spotify.com/v1','') : null;
     }
     if (!found) throw new Error('Playlist "Softball 2026" not found');
-    // fetch all tracks
+    // fetch all tracks (v6: also pull album.images for the Today's Set cards)
     const tracks = [];
-    let turl = `/playlists/${found.id}/tracks?fields=items(track(uri,name,artists(name))),next&limit=100`;
+    let turl = `/playlists/${found.id}/tracks?fields=items(track(uri,name,artists(name),album(images))),next&limit=100`;
     while (turl){
       const j = await this.api('GET', turl);
       for (const it of (j.items||[])){
-        if (it.track && it.track.uri && !it.track.uri.startsWith('spotify:local'))
-          tracks.push({ uri: it.track.uri, name: it.track.name, artist: (it.track.artists||[]).map(a=>a.name).join(', ') });
+        const tr = it.track;
+        if (tr && tr.uri && !tr.uri.startsWith('spotify:local')){
+          const imgs = (tr.album && tr.album.images) || [];
+          // prefer the smallest image >= 64px, fall back to last
+          const img = imgs.find(x => x.width && x.width <= 200) || imgs[imgs.length-1] || null;
+          tracks.push({
+            uri: tr.uri,
+            name: tr.name,
+            artist: (tr.artists||[]).map(a=>a.name).join(', '),
+            image: img ? img.url : null
+          });
+        }
       }
       turl = j.next ? j.next.replace('https://api.spotify.com/v1','') : null;
     }
     const data = { id: found.id, uri: found.uri, name: found.name, tracks };
     await kvSet(cacheKey, data);
     return data;
+  },
+
+  /* v6: batch-fetch audio features (energy/tempo/danceability/valence), cache
+     per-uri in IndexedDB. Endpoint accepts up to 100 ids per call. We pass
+     bare IDs (strip the "spotify:track:" prefix). Returns a Map<uri, feats>
+     including any previously-cached entries. Missing/failed lookups are NOT
+     persisted as null - they're just absent, treated as median energy at
+     read-time by TodaysSet.featureOr().
+     NB: Spotify deprecated this endpoint for newly-created apps in late
+     2024. Apps that already had extended-quota access (Justin's was created
+     well before that) still get data; if a call ever 403s we silently degrade
+     to median energy and the set is still generated, just without the
+     concert-arc structure. */
+  async getAudioFeatures(uris){
+    if (!uris || !uris.length) return new Map();
+    const out = new Map();
+    // pull cache first
+    const cached = await dbAll('audio_features');
+    const byId = new Map(cached.map(r => [r.id, r]));
+    const missing = [];
+    for (const u of uris){
+      const c = byId.get(u);
+      if (c) out.set(u, c);
+      else missing.push(u);
+    }
+    if (!missing.length) return out;
+    // batch in chunks of 100
+    for (let i = 0; i < missing.length; i += 100){
+      const chunk = missing.slice(i, i+100);
+      const ids = chunk.map(u => u.replace(/^spotify:track:/,'')).join(',');
+      try{
+        const j = await this.api('GET', '/audio-features?ids=' + encodeURIComponent(ids));
+        const feats = (j && j.audio_features) || [];
+        for (let k = 0; k < chunk.length; k++){
+          const f = feats[k];
+          if (!f) continue; // null entries are tracks Spotify couldn't analyze
+          const rec = {
+            id: chunk[k],
+            energy:        typeof f.energy === 'number'        ? f.energy        : null,
+            tempo:         typeof f.tempo === 'number'         ? f.tempo         : null,
+            danceability:  typeof f.danceability === 'number'  ? f.danceability  : null,
+            valence:       typeof f.valence === 'number'       ? f.valence       : null,
+          };
+          await dbPut('audio_features', rec);
+          out.set(chunk[k], rec);
+        }
+      }catch(e){
+        console.warn('audio-features fetch failed (continuing without features)', e);
+        // bail out of further chunks; we'll degrade to median energy
+        break;
+      }
+    }
+    return out;
   },
 };
 
@@ -1177,6 +1338,9 @@ const App = {
     this.activeTeamId = await kvGet('activeTeam');
     this.shuffle = !!(await kvGet('shuffle'));
     this.ttsAnnounce = !!(await kvGet('ttsAnnounce'));
+    // v6: per-team extras (setSize, recencyWindow) live in a kv blob so the
+    // existing dugout_teams Supabase schema doesn't need new columns
+    this.teamExtra = (await kvGet('team_extra')) || {};
     $('#chkTTS').checked = this.ttsAnnounce;
     $('#trShuffle').classList.toggle('primary', this.shuffle);
   },
@@ -1362,6 +1526,8 @@ const App = {
       }
       await Spotify.setShuffle(false);
       await Spotify.play(uris, 0);
+      // v6: log the song the tap actually starts playing (the first uri)
+      if (typeof TodaysSet !== 'undefined' && uris[0]) TodaysSet.logPlay(uris[0]);
       toast('▶︎ ' + this._sectionLabel(id));
     }catch(e){ console.error(e); toast('Playback failed — '+e.message); }
   },
@@ -1384,6 +1550,8 @@ const App = {
         try{
           await Spotify.setShuffle(false);
           await Spotify.play(uris, k);
+          // v6: every Music-tab tap that starts a song goes into play_log
+          if (typeof TodaysSet !== 'undefined') TodaysSet.logPlay(t.uri);
           $('#modalSongs').classList.remove('open');
           toast('▶︎ ' + t.name);
         }catch(e){ console.error(e); toast('Playback failed — '+e.message); }
@@ -1762,6 +1930,536 @@ const App = {
     if (Spotify.ready){ try{ await Spotify.stop(); }catch(e){} }
   }
 };
+
+/* ============================================================================
+   TODAY'S SET (v6) — between-innings fresh setlist with concert-flow sequencing
+   ============================================================================
+   Vocabulary
+     - playlist: the user's "Softball 2026" Spotify playlist (~155 tracks)
+     - game: a UUID-tagged generation event. A new game is created each time the
+             user taps "Generate Today's Set". Plays log against that gameId
+             until they generate again.
+     - fresh pool: subset of the playlist whose most-recent play (for this team)
+                   is OUTSIDE the recency window.
+     - set: setSize songs picked from the fresh pool, sequenced as a concert arc.
+   Concert arc math (peakIdx is 0-indexed):
+     peakIdx     = min(ceil(0.7 * setSize), setSize - 2) - 1
+     anchorIdx   = peakIdx - 1     # mid-set "sing-along" — highest danc+val
+     breatherIdx = peakIdx + 1     # contrast — lowest remaining energy
+     closerIdx   = setSize - 1     # second-highest remaining energy
+     openerIdx   = 0               # medium energy (~0.62)
+     [openerIdx+1 .. anchorIdx-1]      = ascending energy fill
+     [breatherIdx+1 .. closerIdx-1]    = remaining mid-energy fill (often empty)
+   Clamping peakIdx to setSize-2 guarantees room for both the breather and the
+   closer at small setSize (the raw 70% formula puts peak at setSize-1 for
+   setSize=5 or 6, which would collide with the closer slot).
+   Walked through:
+     setSize  peakIdx  anchorIdx  breatherIdx  closerIdx  fill
+        5       2         1            3           4       —
+        6       3         2            4           5       [1]
+        7       4         3            5           6       [1,2]   (spec ref)
+        8       5         4            6           7       [1..3]
+        9       6         5            7           8       [1..4]
+*/
+const TodaysSet = {
+  // state
+  game: null,         // active games row: {id, teamId, startedAt, setSongUris, locked:[], notes}
+  set: [],            // array of {uri, name, artist, image, energy, _bucket}
+  setSize: 7,
+  recencyWindow: 30,  // days
+  recencyGames: 3,    // also-exclude-the-last-N-games
+  _features: null,    // Map<uri, {energy,tempo,danceability,valence}>
+  _fetching: false,
+
+  /* ------- team settings ------- */
+  teamCfg(teamId){
+    if (!teamId) return { setSize: 7, recencyWindow: 30, recencyGames: 3 };
+    const c = (App.teamExtra && App.teamExtra[teamId]) || {};
+    return {
+      setSize: clamp(c.setSize ?? 7, 5, 9),
+      recencyWindow: c.recencyWindow ?? 30,
+      recencyGames: c.recencyGames ?? 3,
+    };
+  },
+  async setTeamCfg(teamId, patch){
+    if (!teamId) return;
+    if (!App.teamExtra) App.teamExtra = {};
+    App.teamExtra[teamId] = Object.assign({}, App.teamExtra[teamId] || {}, patch);
+    await kvSet('team_extra', App.teamExtra);
+    Cloud && Cloud.schedule && Cloud.schedule();
+  },
+
+  /* ------- audio features ------- */
+  /* Median 0.5 keeps a feature-less song in the middle of the distribution
+     so the bucketing & sequencing degrade gracefully when Spotify returns
+     null (or 403s the endpoint entirely). */
+  featureOr(uri, key){
+    if (!this._features) return 0.5;
+    const f = this._features.get(uri);
+    if (!f || f[key] == null) return 0.5;
+    return f[key];
+  },
+
+  async ensureFeatures(){
+    const pl = App.playlist;
+    if (!pl || !pl.tracks || !pl.tracks.length){
+      this._features = new Map();
+      return;
+    }
+    if (this._fetching){
+      while (this._fetching) await sleep(50);
+      return;
+    }
+    this._fetching = true;
+    try{
+      const uris = pl.tracks.map(t => t.uri);
+      this._features = await Spotify.getAudioFeatures(uris);
+    } catch(e){
+      console.warn('ensureFeatures failed', e);
+      this._features = new Map();
+    } finally {
+      this._fetching = false;
+    }
+  },
+
+  /* ------- play log ------- */
+  async logPlay(uri){
+    if (!uri) return;
+    const teamId = App.activeTeamId || null;
+    const gameId = this.game ? this.game.id : null;
+    const rec = { id: uuid(), songUri: uri, teamId, gameId, ts: Date.now() };
+    try{ await dbPut('play_log', rec); }catch(e){ console.warn('logPlay failed', e); }
+  },
+
+  /* ------- fresh pool ------- */
+  async _recencyCutoffTs(teamId){
+    // recency window default: min(start of (current game count − 3) ago game, now − 30 days)
+    const cfg = this.teamCfg(teamId);
+    const daysAgo = Date.now() - cfg.recencyWindow * 86400_000;
+    const allGames = await dbAll('games');
+    const teamGames = allGames
+      .filter(g => g.teamId === teamId)
+      .sort((a,b)=> (b.startedAt||0) - (a.startedAt||0));
+    let nGameAgo = Infinity;
+    if (teamGames.length >= cfg.recencyGames){
+      nGameAgo = teamGames[cfg.recencyGames - 1].startedAt || Infinity;
+    }
+    return Math.min(daysAgo, nGameAgo);
+  },
+  async _lastPlayByUri(teamId){
+    const all = await dbAll('play_log');
+    const m = new Map();
+    for (const e of all){
+      if (teamId && e.teamId !== teamId) continue;
+      const cur = m.get(e.songUri) || 0;
+      if (e.ts > cur) m.set(e.songUri, e.ts);
+    }
+    return m;
+  },
+  async buildFreshPool(){
+    const pl = App.playlist;
+    if (!pl || !pl.tracks) return [];
+    const teamId = App.activeTeamId || null;
+    const cutoff = await this._recencyCutoffTs(teamId);
+    const lastPlay = await this._lastPlayByUri(teamId);
+    const fresh = pl.tracks.filter(t => {
+      const lp = lastPlay.get(t.uri) || 0;
+      return lp < cutoff; // never-played counts as fresh (lp=0 < any cutoff)
+    });
+    // Soft fallback: if pool < 2*setSize, top up with oldest-played songs
+    const target = Math.max(2 * this.setSize, this.setSize);
+    if (fresh.length < target){
+      const rest = pl.tracks
+        .filter(t => !fresh.find(f => f.uri === t.uri))
+        .map(t => ({ t, lp: lastPlay.get(t.uri) || 0 }))
+        .sort((a,b) => a.lp - b.lp);
+      for (const r of rest){
+        fresh.push(r.t);
+        if (fresh.length >= target) break;
+      }
+    }
+    return fresh;
+  },
+
+  /* ------- candidate scoring ------- */
+  candidateMeta(track){
+    return {
+      uri: track.uri,
+      name: track.name,
+      artist: track.artist,
+      image: track.image || null,
+      energy: this.featureOr(track.uri, 'energy'),
+      anchor: 0.5 * this.featureOr(track.uri, 'danceability') +
+              0.5 * this.featureOr(track.uri, 'valence'),
+    };
+  },
+
+  /* ------- quartile-spaced sampling -------
+     Sort by energy, slice the pool into setSize equal-population buckets,
+     pick one random song from each. If a bucket is empty (small pool),
+     pull from the nearest non-empty neighbour. */
+  bucketSample(candidates){
+    if (!candidates.length) return [];
+    const sorted = candidates.slice().sort((a,b)=> a.energy - b.energy);
+    const buckets = Array.from({length: this.setSize}, () => []);
+    for (let i = 0; i < sorted.length; i++){
+      const b = Math.min(this.setSize - 1, Math.floor((i * this.setSize) / sorted.length));
+      buckets[b].push(sorted[i]);
+    }
+    const picks = [];
+    const used = new Set();
+    const pickFromBucket = (idx) => {
+      // local-then-radiate search for a usable bucket
+      for (let r = 0; r < this.setSize; r++){
+        for (const sign of [0, -1, 1]){
+          const j = idx + sign * r;
+          if (j < 0 || j >= this.setSize) continue;
+          const pool = buckets[j].filter(x => !used.has(x.uri));
+          if (pool.length){
+            const pick = pool[Math.floor(Math.random() * pool.length)];
+            used.add(pick.uri);
+            return Object.assign({}, pick, { _bucket: j });
+          }
+          if (r === 0) break; // only check current bucket on first iter
+        }
+      }
+      return null;
+    };
+    for (let i = 0; i < this.setSize; i++){
+      const p = pickFromBucket(i);
+      if (p) picks.push(p);
+    }
+    return picks;
+  },
+
+  /* ------- sequencing (concert arc) -------
+     See header comment for the slot math. */
+  sequenceArc(picks){
+    if (!picks.length) return picks;
+    const n = picks.length;
+    const peakIdx = Math.min(Math.ceil(0.7 * n), n - 2) - 1;
+    const anchorIdx = peakIdx - 1;
+    const breatherIdx = peakIdx + 1;
+    const closerIdx = n - 1;
+    const slots = new Array(n).fill(null);
+    const pool = picks.slice();
+
+    const take = (predicateOrPicker) => {
+      const idx = typeof predicateOrPicker === 'function'
+        ? predicateOrPicker(pool)
+        : predicateOrPicker;
+      if (idx < 0 || idx >= pool.length) return null;
+      return pool.splice(idx, 1)[0];
+    };
+
+    // 1. opener: closest to 0.62, preferring 0.55-0.70 band
+    {
+      const band = pool.filter(x => x.energy >= 0.55 && x.energy <= 0.70);
+      const candidates = band.length ? band : pool;
+      let bestIdx = -1, bestDist = Infinity;
+      for (const c of candidates){
+        const d = Math.abs(c.energy - 0.62);
+        if (d < bestDist){ bestDist = d; bestIdx = pool.indexOf(c); }
+      }
+      slots[0] = take(bestIdx);
+    }
+    // 2. peak: highest energy remaining
+    if (peakIdx >= 0){
+      let bestIdx = -1, bestE = -Infinity;
+      pool.forEach((c, i) => { if (c.energy > bestE){ bestE = c.energy; bestIdx = i; } });
+      slots[peakIdx] = take(bestIdx);
+    }
+    // 3. closer: second-highest energy remaining
+    if (closerIdx !== peakIdx){
+      let bestIdx = -1, bestE = -Infinity;
+      pool.forEach((c, i) => { if (c.energy > bestE){ bestE = c.energy; bestIdx = i; } });
+      slots[closerIdx] = take(bestIdx);
+    }
+    // 4. breather: lowest energy remaining
+    if (breatherIdx > peakIdx && breatherIdx < n && !slots[breatherIdx]){
+      let bestIdx = -1, bestE = Infinity;
+      pool.forEach((c, i) => { if (c.energy < bestE){ bestE = c.energy; bestIdx = i; } });
+      if (bestIdx >= 0) slots[breatherIdx] = take(bestIdx);
+    }
+    // 5. anchor: highest danceability+valence remaining
+    if (anchorIdx > 0 && !slots[anchorIdx]){
+      let bestIdx = -1, bestA = -Infinity;
+      pool.forEach((c, i) => { if (c.anchor > bestA){ bestA = c.anchor; bestIdx = i; } });
+      if (bestIdx >= 0) slots[anchorIdx] = take(bestIdx);
+    }
+    // 6. ascending fill between opener (0) and anchor (anchorIdx)
+    //    + remaining tail fill between breather and closer
+    const ascSorted = pool.slice().sort((a,b)=> a.energy - b.energy);
+    for (let s = 1; s < n; s++){
+      if (slots[s]) continue;
+      if (!ascSorted.length) break;
+      const c = ascSorted.shift();
+      const idx = pool.indexOf(c);
+      slots[s] = take(idx);
+    }
+    return slots.filter(Boolean);
+  },
+
+  /* ------- generation entry point ------- */
+  async generateSet({newGame=true, preserveLocks=false} = {}){
+    const pl = App.playlist;
+    if (!pl){ toast('Connect Spotify and load the playlist first'); return; }
+    if ((pl.tracks||[]).length < this.setSize){
+      toast(`Playlist has only ${pl.tracks.length} tracks — need ≥ ${this.setSize}`);
+      this.set = [];
+      this.render();
+      return;
+    }
+    const teamId = App.activeTeamId || null;
+    const cfg = this.teamCfg(teamId);
+    this.setSize = cfg.setSize;
+    this.recencyWindow = cfg.recencyWindow;
+    this.recencyGames = cfg.recencyGames;
+
+    await this.ensureFeatures();
+
+    // collect locked songs we're preserving (by URI)
+    const carry = (preserveLocks && this.set.length)
+      ? this.set.filter((s, i) => this.game && (this.game.locked||[]).includes(s.uri))
+      : [];
+
+    const fresh = await this.buildFreshPool();
+    if (!fresh.length){
+      toast('No fresh songs — every track is in the recency window');
+      return;
+    }
+    const candidates = fresh.map(t => this.candidateMeta(t))
+      .filter(c => !carry.find(x => x.uri === c.uri));
+    const remainingPicks = Math.max(0, this.setSize - carry.length);
+    const picks = remainingPicks ? this.bucketSample(candidates).slice(0, remainingPicks) : [];
+    const all = [...carry, ...picks];
+    const sequenced = this.sequenceArc(all);
+
+    if (newGame || !this.game){
+      this.game = {
+        id: uuid(),
+        teamId,
+        startedAt: Date.now(),
+        setSongUris: sequenced.map(s => s.uri),
+        locked: preserveLocks ? carry.map(s => s.uri) : [],
+        notes: ''
+      };
+      await dbPut('games', this.game);
+      await kvSet('active_game_id', this.game.id);
+    } else {
+      this.game.setSongUris = sequenced.map(s => s.uri);
+      if (!preserveLocks) this.game.locked = [];
+      await dbPut('games', this.game);
+    }
+    this.set = sequenced;
+    this.render();
+    toast(newGame ? '🎯 Today\'s Set generated' : '⟳ Set refreshed');
+  },
+
+  /* ------- single-slot reroll, respecting locks + target energy band ------- */
+  async rerollSlot(slotIdx){
+    if (!this.set.length || slotIdx < 0 || slotIdx >= this.set.length) return;
+    if (this.game && (this.game.locked||[]).includes(this.set[slotIdx].uri)){
+      toast('Slot is locked'); return;
+    }
+    const pl = App.playlist;
+    if (!pl) return;
+    await this.ensureFeatures();
+    const usedUris = new Set(this.set.map(s => s.uri));
+    const fresh = await this.buildFreshPool();
+    // exclude songs already in the set
+    let candidates = fresh
+      .filter(t => !usedUris.has(t.uri))
+      .map(t => this.candidateMeta(t));
+    if (!candidates.length){
+      // fall back to any non-set song
+      candidates = pl.tracks
+        .filter(t => !usedUris.has(t.uri))
+        .map(t => this.candidateMeta(t));
+    }
+    if (!candidates.length){ toast('No songs left to swap in'); return; }
+    // Pick within the same energy band as the current slot (±0.10), widening if empty
+    const target = this.set[slotIdx].energy;
+    let pick = null;
+    for (const halfWidth of [0.10, 0.18, 0.30, 1.0]){
+      const band = candidates.filter(c => Math.abs(c.energy - target) <= halfWidth);
+      if (band.length){
+        pick = band[Math.floor(Math.random() * band.length)];
+        break;
+      }
+    }
+    if (!pick) pick = candidates[Math.floor(Math.random() * candidates.length)];
+    this.set[slotIdx] = pick;
+    if (this.game){
+      this.game.setSongUris = this.set.map(s => s.uri);
+      await dbPut('games', this.game);
+    }
+    this.render();
+  },
+
+  /* ------- lock toggle ------- */
+  async toggleLock(slotIdx){
+    if (!this.game) return;
+    const uri = this.set[slotIdx] && this.set[slotIdx].uri;
+    if (!uri) return;
+    const locks = new Set(this.game.locked || []);
+    if (locks.has(uri)) locks.delete(uri); else locks.add(uri);
+    this.game.locked = Array.from(locks);
+    await dbPut('games', this.game);
+    this.render();
+  },
+
+  /* ------- play a single slot (logs the tap) ------- */
+  async playSlot(slotIdx){
+    if (!Spotify.token){ toast('Connect Spotify first'); return; }
+    const s = this.set[slotIdx]; if (!s) return;
+    try{
+      await Spotify.setShuffle(false);
+      await Spotify.play([s.uri], 0);
+      await this.logPlay(s.uri);
+      toast('▶︎ ' + s.name);
+      this.render(); // updates next-to-play ring
+    }catch(e){ console.error(e); toast('Playback failed — ' + e.message); }
+  },
+
+  /* ------- restore active game from storage on app load ------- */
+  async restore(){
+    const id = await kvGet('active_game_id');
+    if (!id){ this.set = []; return; }
+    const all = await dbAll('games');
+    const g = all.find(x => x.id === id);
+    if (!g){ this.set = []; return; }
+    this.game = g;
+    const pl = App.playlist;
+    if (!pl){ return; }
+    await this.ensureFeatures();
+    const byUri = new Map(pl.tracks.map(t => [t.uri, t]));
+    this.set = (g.setSongUris || [])
+      .map(u => byUri.get(u))
+      .filter(Boolean)
+      .map(t => this.candidateMeta(t));
+  },
+
+  /* ------- UI render ------- */
+  energyTier(e){
+    if (e == null) return 'mid';
+    if (e >= 0.72) return 'hi';
+    if (e <= 0.45) return 'lo';
+    return 'mid';
+  },
+  energyLabel(tier){
+    return tier === 'hi' ? 'High' : tier === 'lo' ? 'Low' : 'Mid';
+  },
+
+  render(){
+    const wrap = $('#todaysSetWrap');
+    if (!wrap) return;
+    const strip = $('#todaysSetStrip');
+    const empty = $('#todaysSetEmpty');
+    if (!this.set || !this.set.length){
+      strip.style.display = 'none';
+      empty.style.display = '';
+      // empty state copy depends on whether playlist has tracks
+      const pl = App.playlist;
+      if (!pl || !pl.tracks || !pl.tracks.length){
+        empty.textContent = 'Connect Spotify and load the playlist to generate a set.';
+      } else if (pl.tracks.length < this.setSize){
+        empty.textContent = `Playlist has ${pl.tracks.length} tracks — need at least ${this.setSize}.`;
+      } else {
+        empty.textContent = 'Tap “Generate Today\'s Set” to spin up a fresh 7-song arc.';
+      }
+      return;
+    }
+    empty.style.display = 'none';
+    strip.style.display = '';
+    strip.innerHTML = '';
+    const locked = new Set((this.game && this.game.locked) || []);
+    // "Next to play" = first slot whose song hasn't been played yet during this game
+    const nextIdx = this._nextToPlayIdx();
+    this.set.forEach((s, i) => {
+      const card = document.createElement('div');
+      card.className = 'ts-card' + (locked.has(s.uri) ? ' locked' : '') + (i === nextIdx ? ' next' : '');
+      const tier = this.energyTier(s.energy);
+      card.innerHTML = `
+        <div class="ts-art" ${s.image ? `style="background-image:url(${s.image})"` : ''}>
+          <span class="ts-slot">${i+1}</span>
+          ${locked.has(s.uri) ? '<span class="ts-lock" title="Locked">🔒</span>' : ''}
+        </div>
+        <div class="ts-title" title="${escapeHtml(s.name)}">${escapeHtml(s.name)}</div>
+        <div class="ts-artist" title="${escapeHtml(s.artist)}">${escapeHtml(s.artist)}</div>
+        <div class="ts-row">
+          <span class="ts-energy ts-energy-${tier}">${this.energyLabel(tier)}</span>
+          <button class="ts-reroll" title="Re-roll this slot" aria-label="Re-roll slot">↻</button>
+        </div>
+      `;
+      // tap-to-play (anywhere on the card except the reroll button)
+      let lpTimer = null;
+      let lpFired = false;
+      const cancelLP = () => { if (lpTimer){ clearTimeout(lpTimer); lpTimer = null; } };
+      card.addEventListener('pointerdown', (e) => {
+        if (e.target.closest('.ts-reroll')) return;
+        lpFired = false;
+        lpTimer = setTimeout(() => {
+          lpFired = true;
+          this.toggleLock(i);
+        }, 550);
+      });
+      card.addEventListener('pointerup', () => cancelLP());
+      card.addEventListener('pointercancel', () => cancelLP());
+      card.addEventListener('pointerleave', () => cancelLP());
+      card.addEventListener('click', (e) => {
+        if (e.target.closest('.ts-reroll')) return;
+        if (lpFired){ lpFired = false; return; }
+        this.playSlot(i);
+      });
+      card.querySelector('.ts-reroll').addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.rerollSlot(i);
+      });
+      strip.appendChild(card);
+    });
+  },
+  _nextToPlayIdx(){
+    // The first slot whose uri hasn't been played since this game started.
+    if (!this.game || !this.set.length) return 0;
+    // we'd need to inspect play_log for this game — but rendering is sync.
+    // Cache via this._playedSet, refreshed lazily.
+    if (!this._playedSet){
+      this._refreshPlayedSet();
+      return 0;
+    }
+    for (let i = 0; i < this.set.length; i++){
+      if (!this._playedSet.has(this.set[i].uri)) return i;
+    }
+    return this.set.length - 1;
+  },
+  async _refreshPlayedSet(){
+    if (!this.game){ this._playedSet = new Set(); return; }
+    const all = await dbAll('play_log');
+    this._playedSet = new Set(
+      all.filter(e => e.gameId === this.game.id).map(e => e.songUri)
+    );
+    this.render();
+  },
+
+  /* ------- settings dialog (setSize) ------- */
+  openSettings(){
+    const cur = this.teamCfg(App.activeTeamId);
+    const v = prompt('Today\'s Set size (5–9):', String(cur.setSize));
+    if (v == null) return;
+    const n = parseInt(v, 10);
+    if (isNaN(n) || n < 5 || n > 9){ toast('Size must be between 5 and 9'); return; }
+    if (n === cur.setSize) return;
+    this.setTeamCfg(App.activeTeamId, { setSize: n }).then(async () => {
+      this.setSize = n;
+      // mid-game change: regenerate from current pool, preserving still-fitting locks
+      await this.generateSet({ newGame: false, preserveLocks: true });
+      toast('Set size → ' + n);
+    });
+  },
+};
+
+function clamp(v, lo, hi){ return Math.max(lo, Math.min(hi, v)); }
 
 function escapeHtml(s){ return String(s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c])); }
 function pickFile(accept='*/*'){
@@ -2597,7 +3295,23 @@ const Cloud = {
           updated_at: new Date(pad.updatedAt || Date.now()).toISOString()
         });
       }
-      const cfg = { sections: App.sections, assignments: App.assignments, shuffle: App.shuffle, ttsAnnounce: App.ttsAnnounce };
+      // v6: scope all the new Today's Set state under settings.config so we
+      // don't need new Supabase tables. play_log/games/audio_features are
+      // bounded in size (playlist is ~155 tracks, games are weekly).
+      const playLog = await dbAll('play_log');
+      const games = await dbAll('games');
+      const audioFeatures = await dbAll('audio_features');
+      const cfg = {
+        sections: App.sections,
+        assignments: App.assignments,
+        shuffle: App.shuffle,
+        ttsAnnounce: App.ttsAnnounce,
+        team_extra: App.teamExtra || {},
+        play_log: playLog,
+        games,
+        audio_features: audioFeatures,
+        active_game_id: await kvGet('active_game_id'),
+      };
       await this.sb.from('dugout_settings').upsert({
         user_id: this.user.id,
         spotify_refresh_token: Spotify.refresh || null,
@@ -2634,6 +3348,33 @@ const Cloud = {
         if (st.config && st.config.assignments && !Object.keys(App.assignments || {}).length){
           App.assignments = st.config.assignments;
           await dbPutRaw('kv', { id:'section_assignments', value: App.assignments });
+        }
+        // v6: pull Today's Set state. Strategy: union by id with local so an
+        // offline-recorded play_log entry isn't lost; for audio_features the
+        // cloud value wins (it's the same data either way).
+        if (st.config){
+          if (st.config.team_extra){
+            App.teamExtra = st.config.team_extra;
+            await dbPutRaw('kv', { id:'team_extra', value: App.teamExtra });
+          }
+          const unionInto = async (store, rows) => {
+            if (!Array.isArray(rows)) return;
+            const local = await dbAll(store);
+            const byId = new Map(local.map(r => [r.id, r]));
+            for (const r of rows){
+              if (!r || !r.id) continue;
+              const cur = byId.get(r.id);
+              if (!cur) await dbPutRaw(store, r);
+              else if (store === 'audio_features') await dbPutRaw(store, r);
+              // play_log/games entries are immutable - skip if already present
+            }
+          };
+          await unionInto('play_log', st.config.play_log);
+          await unionInto('games', st.config.games);
+          await unionInto('audio_features', st.config.audio_features);
+          if (st.config.active_game_id){
+            await dbPutRaw('kv', { id:'active_game_id', value: st.config.active_game_id });
+          }
         }
         if (st.spotify_refresh_token && !Spotify.token){
           Spotify.refresh = st.spotify_refresh_token;
@@ -2709,6 +3450,15 @@ const Cloud = {
     App.renderLineup();
     App.renderPads();
     App.renderSections();
+    // v6: pick up any pulled team_extra / games / play_log changes
+    try{
+      App.teamExtra = (await kvGet('team_extra')) || {};
+      if (typeof TodaysSet !== 'undefined'){
+        await TodaysSet.restore();
+        TodaysSet.render();
+        TodaysSet._refreshPlayedSet().catch(()=>{});
+      }
+    }catch(e){ console.warn(e); }
 
     // push anything the cloud is missing
     await this.syncUp();
@@ -2746,9 +3496,37 @@ window.addEventListener('DOMContentLoaded', async () => {
       const pl = await Spotify.getSoftballPlaylist(true);
       const unsorted = await App.ensureAssignments(pl);
       App.renderSections(pl);
+      // v6: refresh audio-features cache for any new tracks
+      try{ await TodaysSet.ensureFeatures(); }catch(e){ console.warn(e); }
       toast('Playlist loaded · ' + pl.tracks.length + ' tracks' + (unsorted ? ' · ' + unsorted + ' new — assign in ⚙' : ''));
     }catch(e){ console.error(e); toast(e.message); }
   });
+
+  // v6: Today's Set buttons
+  $('#btnTSGenerate').addEventListener('click', async () => {
+    if (!Spotify.token){ toast('Connect Spotify first'); return; }
+    if (!App.playlist){
+      try{
+        const pl = await Spotify.getSoftballPlaylist();
+        await App.ensureAssignments(pl);
+        App.renderSections(pl);
+      }catch(e){ toast(e.message); return; }
+    }
+    // If a set already exists for the current game, confirm before clobbering
+    if (TodaysSet.set && TodaysSet.set.length){
+      if (!confirm('Replace today\'s set?')) return;
+    }
+    await TodaysSet.generateSet({ newGame: true, preserveLocks: false });
+  });
+  $('#btnTSRefreshAll').addEventListener('click', async () => {
+    if (!TodaysSet.set || !TodaysSet.set.length){
+      // Same as Generate when no set exists
+      $('#btnTSGenerate').click();
+      return;
+    }
+    await TodaysSet.generateSet({ newGame: false, preserveLocks: true });
+  });
+  $('#btnTSSettings').addEventListener('click', () => TodaysSet.openSettings());
 
   // admin
   $('#btnAdmin').addEventListener('click', () => { renderSongManager(); $('#modalAdmin').classList.add('open'); });
@@ -2925,6 +3703,14 @@ window.addEventListener('DOMContentLoaded', async () => {
       App.renderSections(pl);
     }catch(e){ /* may simply not be loaded yet */ }
   }
+
+  // v6: Today's Set — restore an in-progress game (if any) and render
+  try{
+    await TodaysSet.restore();
+    TodaysSet.render();
+    if (App.playlist) TodaysSet.ensureFeatures().catch(()=>{});
+    TodaysSet._refreshPlayedSet().catch(()=>{});
+  }catch(e){ console.warn('Today\'s Set restore failed', e); }
 
   // gentle nudge to enable sync
   if (!Cloud.user) setTimeout(()=> toast('Tip: open ⚙ settings to sign in and sync across devices', 3500), 1500);
