@@ -447,6 +447,19 @@
   .walkup-overlay .wo-buttons { display: flex; flex-direction: column; gap: 12px; width: 100%; max-width: 340px; margin-top: 14px; }
   .walkup-overlay .wo-buttons .btn { width: 100%; min-height: 64px; font-size: 18px; }
 
+  /* v6.2: offline banner */
+  #offlineBanner{
+    position: fixed; top: 0; left: 0; right: 0; z-index: 300;
+    display: none; text-align: center;
+    font-size: 13px; font-weight: 600; letter-spacing: .2px;
+    padding: 10px 14px;
+    padding-top: calc(10px + env(safe-area-inset-top));
+    background: #7a2e2e; color: #ffd9d9;
+    box-shadow: 0 2px 10px rgba(0,0,0,.4);
+  }
+  #offlineBanner.show{ display: block; }
+  #offlineBanner.ok{ background: #234d2c; color: #c9f0d0; }
+
   /* tiny mobile-first detail */
   @media (min-width: 720px) {
     main { max-width: 720px; margin: 0 auto; width: 100%; }
@@ -456,6 +469,8 @@
 </style>
 </head>
 <body>
+
+<div id="offlineBanner" role="status"></div>
 
 <header>
   <div class="brand" id="teamSwitch" role="button" title="Switch team">
@@ -3760,6 +3775,52 @@ window.addEventListener('DOMContentLoaded', async () => {
     if (App.playlist) TodaysSet.ensureFeatures().catch(()=>{});
     TodaysSet._refreshPlayedSet().catch(()=>{});
   }catch(e){ console.warn('Today\'s Set restore failed', e); }
+
+  /* ---- v6.2 reliability pack ----------------------------------------- */
+
+  // 1. Screen wake lock — keep the phone awake while the app is open.
+  //    Re-acquired whenever the tab becomes visible again (the lock is
+  //    auto-released by the OS on tab switch / screen off). Some browsers
+  //    only grant it after a user gesture, so we also retry on first tap.
+  let _wakeLock = null;
+  async function acquireWakeLock(){
+    if (!('wakeLock' in navigator)) return;
+    try{
+      _wakeLock = await navigator.wakeLock.request('screen');
+      _wakeLock.addEventListener('release', () => { _wakeLock = null; });
+    }catch(e){ /* denied (low battery, etc.) — not fatal */ }
+  }
+  acquireWakeLock();
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && !_wakeLock) acquireWakeLock();
+  });
+  window.addEventListener('pointerdown', () => { if (!_wakeLock) acquireWakeLock(); }, { once: true });
+
+  // 2. Persistent storage — ask the browser to NEVER evict our IndexedDB
+  //    (walk-up clips, mixes, lineups). Without this, iOS Safari may wipe
+  //    site data after ~7 days of non-use. Granted silently when installed
+  //    to the home screen; harmless no-op where unsupported.
+  try{
+    if (navigator.storage && navigator.storage.persist){
+      const already = await navigator.storage.persisted();
+      if (!already) await navigator.storage.persist();
+    }
+  }catch(e){ /* unsupported — fine */ }
+
+  // 3. Offline banner — fields have bad signal; say plainly what still works.
+  const _ob = $('#offlineBanner');
+  function _showOffline(){
+    _ob.classList.remove('ok');
+    _ob.textContent = '📶 No signal — Spotify won\'t play. Soundboard & saved walk-ups still work.';
+    _ob.classList.add('show');
+  }
+  window.addEventListener('offline', _showOffline);
+  window.addEventListener('online', () => {
+    _ob.textContent = '✓ Back online';
+    _ob.classList.add('ok');
+    setTimeout(() => _ob.classList.remove('show','ok'), 2500);
+  });
+  if (!navigator.onLine) _showOffline();
 
   // gentle nudge to enable sync
   if (!Cloud.user) setTimeout(()=> toast('Tip: open ⚙ settings to sign in and sync across devices', 3500), 1500);
