@@ -337,6 +337,20 @@
   }
   .toast.show { opacity: 1; }
 
+  /* ---- walk-up overlay (v3.4) ---- */
+  .walkup-overlay {
+    position: fixed; inset: 0; z-index: 120;
+    background: rgba(8,10,13,.97);
+    display: none; flex-direction: column; align-items: center; justify-content: center;
+    gap: 12px; padding: 24px;
+  }
+  .walkup-overlay.open { display: flex; }
+  .walkup-overlay .jersey.big { width: 110px; height: 110px; border-radius: 28px; font-size: 44px; }
+  .walkup-overlay .wo-name { font-size: 30px; font-weight: 800; text-align: center; }
+  .walkup-overlay .wo-sub { font-size: 13px; }
+  .walkup-overlay .wo-buttons { display: flex; flex-direction: column; gap: 12px; width: 100%; max-width: 340px; margin-top: 14px; }
+  .walkup-overlay .wo-buttons .btn { width: 100%; min-height: 64px; font-size: 18px; }
+
   /* tiny mobile-first detail */
   @media (min-width: 720px) {
     main { max-width: 720px; margin: 0 auto; width: 100%; }
@@ -647,6 +661,18 @@
       In <em>Advanced</em>, tap an empty spot on the song envelope to add a point, drag to move,
       double-tap an existing point to remove it.
     </div>
+  </div>
+</div>
+
+<!-- ================ WALK-UP OVERLAY (v3.4) ================ -->
+<div class="walkup-overlay" id="walkupOverlay">
+  <div class="jersey big" id="woJersey">#</div>
+  <div class="wo-name" id="woName">Player</div>
+  <div class="wo-sub muted" id="woSub">Walk-up</div>
+  <div class="wo-buttons">
+    <button class="btn primary" id="woPlay">&#9654;&#65038; Play</button>
+    <button class="btn warn" id="woStop">&#9632; Stop</button>
+    <button class="btn ghost" id="woClose">&#10005; Close</button>
   </div>
 </div>
 
@@ -980,6 +1006,9 @@ const Spotify = {
   },
   _renderNowPlaying(){
     const s = this.state;
+    // v3.4: transport button mirrors actual play/pause state
+    const playBtn = $('#trPlay');
+    if (playBtn) playBtn.textContent = (s && !s.paused) ? '\u275A\u275A' : '\u25B6\uFE0E';
     if (!s || !s.track_window || !s.track_window.current_track){
       $('#nowTitle').textContent = 'Paused';
       $('#nowArtist').textContent = '—';
@@ -1042,6 +1071,12 @@ const Spotify = {
   async stop(){
     if (this.player){ try{ await this.player.pause(); }catch(e){} }
   },
+  /* v3.4: pause wherever music is playing — this device's player AND, via the
+     Web API, whichever device is active (covers playing from the Spotify app) */
+  async pauseEverywhere(){
+    if (this.player){ try{ await this.player.pause(); }catch(e){} }
+    if (this.token){ try{ await this.api('PUT', '/me/player/pause'); }catch(e){} }
+  },
   /* fetch the Softball 2026 playlist (cached) */
   async getSoftballPlaylist(forceRefresh=false){
     const cacheKey = 'softball_playlist_cache';
@@ -1094,6 +1129,10 @@ const App = {
   activeLocalNodes: new Set(),
   // remember if Spotify was playing before duck for restore
   spotifyWasPlaying: false,
+  // v3.4: current walk-up audio nodes (for fade-out stop) + overlay state
+  walkupNodes: null,
+  _walkupGen: 0,
+  _overlayPlayer: null,
 
   async load(){
     this.sections = (await kvGet('sections')) || DEFAULT_SECTIONS.slice();
@@ -1501,37 +1540,84 @@ const App = {
     const roster = this.teamPlayers();
     const p = roster[idx]; if (!p) return;
     this.activePlayerIdx = idx; this.renderLineup();
+    this.openWalkupOverlay(p);
+    await this._startWalkup(p);
+  },
+  /* v3.4: start (or restart) a player's walk-up — stops Spotify everywhere first */
+  async _startWalkup(p){
+    const gen = ++this._walkupGen;
+    await this._stopAllLocal();
+    try{ await Spotify.pauseEverywhere(); }catch(e){}
+    if (gen !== this._walkupGen) return;
     // 1. If a rendered mix exists, play that single file.
     if (p.mixBlobId){
       const blob = await blobGet(p.mixBlobId);
       if (blob){
-        await this._stopAllLocal();
-        if (Spotify.ready){ try{ await Spotify.stop(); }catch(e){} }
+        if (gen !== this._walkupGen) return;
         const buf = await decodeBlob(blob);
-        const ctx = audio();
-        const src = ctx.createBufferSource(); src.buffer = buf;
-        src.connect(getLocalBus()); this.activeLocalNodes.add(src); src.start();
-        src.onended = ()=> this.activeLocalNodes.delete(src);
+        if (gen !== this._walkupGen) return;
+        this._playWalkupBuffer(buf);
         return;
       }
     }
-    // 2. Otherwise live duck: pause spotify temporarily, play announcement (or TTS),
-    //    then walk-up song.
-    if (Spotify.ready) { try{ await Spotify.stop(); }catch(e){} }
+    // 2. Otherwise announcement (or TTS), then walk-up song.
     let annBlob = p.annBlobId ? await blobGet(p.annBlobId) : null;
+    if (gen !== this._walkupGen) return;
     if (annBlob){
       const buf = await decodeBlob(annBlob);
+      if (gen !== this._walkupGen) return;
       await this._playAndWait(buf);
     } else if (this.ttsAnnounce){
       await this._speak(`Now batting, number ${p.num||''}, ${p.name||'Player'}`);
     }
+    if (gen !== this._walkupGen) return;
     if (p.walkupBlobId){
       const wbuf = await decodeBlob(await blobGet(p.walkupBlobId));
-      const ctx = audio();
-      const src = ctx.createBufferSource(); src.buffer = wbuf;
-      src.connect(getLocalBus()); this.activeLocalNodes.add(src); src.start();
-      src.onended = ()=> this.activeLocalNodes.delete(src);
+      if (gen !== this._walkupGen) return;
+      this._playWalkupBuffer(wbuf);
     }
+  },
+  /* v3.4: walk-up audio goes through its own gain node so we can fade it out */
+  _playWalkupBuffer(buf){
+    const ctx = audio();
+    const src = ctx.createBufferSource(); src.buffer = buf;
+    const g = ctx.createGain(); g.gain.value = 1;
+    src.connect(g); g.connect(getLocalBus());
+    this.walkupNodes = { src, gain: g };
+    this.activeLocalNodes.add(src);
+    src.start();
+    src.onended = () => {
+      this.activeLocalNodes.delete(src);
+      if (this.walkupNodes && this.walkupNodes.src === src) this.walkupNodes = null;
+    };
+  },
+  /* v3.4: manual stop fades out over `fadeSec` instead of cutting */
+  stopWalkup(fadeSec=1){
+    this._walkupGen++;
+    try{ speechSynthesis.cancel(); }catch(e){}
+    const wn = this.walkupNodes;
+    this.walkupNodes = null;
+    if (!wn || !wn.src) return;
+    try{
+      const ctx = audio();
+      const g = wn.gain.gain;
+      g.cancelScheduledValues(ctx.currentTime);
+      g.setValueAtTime(g.value, ctx.currentTime);
+      g.linearRampToValueAtTime(0, ctx.currentTime + fadeSec);
+    }catch(e){}
+    const src = wn.src;
+    setTimeout(()=>{ try{ src.stop(); }catch(e){} }, fadeSec*1000 + 60);
+  },
+  openWalkupOverlay(p){
+    this._overlayPlayer = p;
+    $('#woJersey').textContent = p.num || '#';
+    $('#woName').textContent = p.name || 'Player';
+    $('#woSub').textContent = p.mixBlobId ? 'Mixed walk-up' : 'Walk-up';
+    $('#walkupOverlay').classList.add('open');
+  },
+  closeWalkupOverlay(){
+    $('#walkupOverlay').classList.remove('open');
+    this._overlayPlayer = null;
   },
   async nextBatter(){
     const roster = this.teamPlayers();
@@ -1543,8 +1629,15 @@ const App = {
     return new Promise(resolve => {
       const ctx = audio();
       const src = ctx.createBufferSource(); src.buffer = buf;
-      src.connect(getLocalBus()); this.activeLocalNodes.add(src); src.start();
-      src.onended = () => { this.activeLocalNodes.delete(src); resolve(); };
+      const g = ctx.createGain(); g.gain.value = 1;
+      src.connect(g); g.connect(getLocalBus());
+      this.walkupNodes = { src, gain: g };
+      this.activeLocalNodes.add(src); src.start();
+      src.onended = () => {
+        this.activeLocalNodes.delete(src);
+        if (this.walkupNodes && this.walkupNodes.src === src) this.walkupNodes = null;
+        resolve();
+      };
     });
   },
   _speak(text){
@@ -2442,6 +2535,11 @@ window.addEventListener('DOMContentLoaded', async () => {
     if (isNaN(v)){ Mixer._updateClipLabel(); return; }
     Mixer.setClip(Mixer.clipStart, Mixer.clipStart + v);
   });
+
+  // walk-up overlay (v3.4)
+  $('#woPlay').addEventListener('click', () => { const p = App._overlayPlayer; if (p) App._startWalkup(p); });
+  $('#woStop').addEventListener('click', () => App.stopWalkup(1));
+  $('#woClose').addEventListener('click', () => { App.stopWalkup(1); App.closeWalkupOverlay(); });
 
   // sounds
   $('#btnAddPad').addEventListener('click', () => App.addPad());
