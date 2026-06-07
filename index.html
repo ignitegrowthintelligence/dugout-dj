@@ -6,9 +6,10 @@
 <meta name="theme-color" content="#0b0d10">
 <title>Dugout DJ</title>
 <!--
-  Dugout DJ — single-file softball game-day remote.
-  Spotify Web Playback SDK + local Web Audio soundboard + lineup walk-ups + v1.5 mixer.
-  Built for Justin. Vanilla JS, no frameworks. All state persisted to IndexedDB.
+  Dugout DJ — single-file softball game-day remote. v2
+  Spotify Web Playback SDK + local Web Audio soundboard + lineup walk-ups + v1.5 mixer
+  + v2: Google sign-in (Supabase) with cross-device cloud sync and section song lists.
+  Built for Justin. Vanilla JS, no frameworks. State persisted to IndexedDB, synced to Supabase.
 
   SPOTIFY REDIRECT URI:
     The PKCE flow uses window.location.origin + pathname as the redirect URI at runtime,
@@ -16,6 +17,7 @@
     Expected production URL: https://<github-user>.github.io/dugout-dj/
     For local dev (file://) Spotify auth will not work — host it.
 -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <style>
   :root {
     --bg: #0b0d10;
@@ -257,6 +259,19 @@
     margin: 0 auto 10px; opacity: .8;
   }
 
+  /* ---- song list (v2) ---- */
+  .song-row {
+    width: 100%; text-align: left;
+    display: flex; align-items: center; gap: 10px;
+    padding: 12px 8px; border-bottom: 1px solid var(--line);
+  }
+  .song-row:active { background: var(--bg-3); }
+  .song-row .idx { color: var(--text-dim); width: 30px; font-size: 12px; flex: 0 0 auto; }
+  .song-row .t { flex: 1; min-width: 0; }
+  .song-row .n { font-weight: 600; font-size: 14px; }
+  .song-row .a { font-size: 11px; color: var(--text-dim); }
+  .song-row .go { color: var(--accent); font-size: 16px; flex: 0 0 auto; }
+
   /* ---- mixer ---- */
   .mixer-canvas-wrap {
     background: var(--bg-3); border: 1px solid var(--line);
@@ -307,6 +322,7 @@
     </div>
   </div>
   <div class="right">
+    <button class="icon-btn" id="btnCloud" title="Account & sync">☁</button>
     <button class="icon-btn" id="btnAdmin" title="Configure">⚙</button>
     <button class="icon-btn" id="btnAuth" title="Spotify">♫</button>
   </div>
@@ -402,6 +418,19 @@
     </div>
 
     <div class="card" style="margin-bottom:10px">
+      <div class="h-title" style="margin-top:0">Account &amp; sync</div>
+      <div id="cloudStatus" class="muted" style="font-size:13px; margin-bottom:8px">Not signed in — data stays on this device only.</div>
+      <div class="row" style="gap:8px; flex-wrap:wrap">
+        <button class="btn small primary" id="btnCloudLogin">Sign in with Google</button>
+        <button class="btn small ghost" id="btnCloudLogout">Sign out</button>
+        <button class="btn small ghost" id="btnSyncNow">Sync now</button>
+      </div>
+      <div class="muted" style="font-size:11px; margin-top: 8px;">
+        Signing in syncs your lineup, pads, clips and Spotify connection to every device you use.
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:10px">
       <div class="h-title" style="margin-top:0">Spotify</div>
       <div id="spotifyStatus" class="muted" style="font-size:13px; margin-bottom:8px">Not connected.</div>
       <div class="row" style="gap:8px; flex-wrap:wrap">
@@ -432,6 +461,19 @@
       <div class="h-title" style="margin-top:0">Danger zone</div>
       <button class="btn small danger" id="btnWipe">Wipe all local data</button>
     </div>
+  </div>
+</div>
+
+<!-- ================ SECTION SONGS MODAL (v2) ================ -->
+<div class="modal-back" id="modalSongs">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <div class="close-row">
+      <h2 id="songsTitle">Section</h2>
+      <button class="btn small ghost" id="songsClose">Close</button>
+    </div>
+    <button class="btn block primary" id="btnPlaySection" style="margin-bottom:10px">▶︎ Play section from start</button>
+    <div id="songsList"></div>
   </div>
 </div>
 
@@ -526,10 +568,9 @@
 </div>
 
 <div class="toast" id="toast"></div>
-
 <script>
 /* ============================================================================
-   Dugout DJ — single-file game-day remote
+   Dugout DJ — single-file game-day remote (v2: cloud sync + song lists)
    ============================================================================ */
 
 /* ---------- tiny helpers ---------- */
@@ -560,14 +601,30 @@ function openDB(){
 }
 function tx(store, mode='readonly'){ return _db.transaction(store, mode).objectStore(store); }
 function dbGet(store, id){ return new Promise((res,rej)=>{ const r = tx(store).get(id); r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error); }); }
-function dbPut(store, val){ return new Promise((res,rej)=>{ const r = tx(store,'readwrite').put(val); r.onsuccess=()=>res(); r.onerror=()=>rej(r.error); }); }
-function dbDel(store, id){ return new Promise((res,rej)=>{ const r = tx(store,'readwrite').delete(id); r.onsuccess=()=>res(); r.onerror=()=>rej(r.error); }); }
+function dbPutRaw(store, val){ return new Promise((res,rej)=>{ const r = tx(store,'readwrite').put(val); r.onsuccess=()=>res(); r.onerror=()=>rej(r.error); }); }
+function dbDelRaw(store, id){ return new Promise((res,rej)=>{ const r = tx(store,'readwrite').delete(id); r.onsuccess=()=>res(); r.onerror=()=>rej(r.error); }); }
 function dbAll(store){ return new Promise((res,rej)=>{ const r = tx(store).getAll(); r.onsuccess=()=>res(r.result||[]); r.onerror=()=>rej(r.error); }); }
+/* v2: writes stamp updatedAt and nudge the cloud sync */
+async function dbPut(store, val){
+  if (store==='players' || store==='pads') val.updatedAt = Date.now();
+  await dbPutRaw(store, val);
+  if ((store==='players' || store==='pads') && typeof Cloud!=='undefined') Cloud.schedule();
+}
+async function dbDel(store, id){
+  await dbDelRaw(store, id);
+  if (typeof Cloud!=='undefined' && Cloud.user){
+    if (store==='players') Cloud.deleteRow('dugout_players', id);
+    if (store==='pads')    Cloud.deleteRow('dugout_pads', id);
+  }
+}
 async function kvGet(k, dflt=null){ const v = await dbGet('kv', k); return v? v.value : dflt; }
-async function kvSet(k, v){ await dbPut('kv', { id:k, value:v }); }
-async function blobPut(id, blob){ await dbPut('blobs', { id, blob }); }
+async function kvSet(k, v){
+  await dbPutRaw('kv', { id:k, value:v });
+  if (typeof Cloud!=='undefined' && ['sections','shuffle','ttsAnnounce','spotify_token'].includes(k)) Cloud.schedule();
+}
+async function blobPut(id, blob){ await dbPutRaw('blobs', { id, blob }); }
 async function blobGet(id){ const r = await dbGet('blobs', id); return r? r.blob : null; }
-async function blobDel(id){ await dbDel('blobs', id); }
+async function blobDel(id){ await dbDelRaw('blobs', id); }
 function uuid(){ return 'id-' + Math.random().toString(36).slice(2,10) + Date.now().toString(36); }
 
 /* ---------- shared Web Audio context ---------- */
@@ -647,10 +704,13 @@ const Spotify = {
   async init(){
     const tok = await kvGet('spotify_token');
     if (tok){ this.token = tok.access; this.refresh = tok.refresh; this.expiresAt = tok.expiresAt; }
-    // If returned from auth, finish exchange
+    // If returned from SPOTIFY auth, finish exchange.
+    // v2: both Spotify and Google sign-in return to this URL with ?code= —
+    // a localStorage flag set before each redirect tells us whose code it is.
     const url = new URL(window.location.href);
     const code = url.searchParams.get('code');
-    if (code){
+    if (code && localStorage.getItem('dd_auth_pending') === 'spotify'){
+      localStorage.removeItem('dd_auth_pending');
       const verifier = await kvGet('pkce_verifier');
       try{
         await this._exchangeCode(code, verifier);
@@ -667,6 +727,7 @@ const Spotify = {
   async login(){
     const { verifier, challenge } = await pkceChallenge();
     await kvSet('pkce_verifier', verifier);
+    localStorage.setItem('dd_auth_pending', 'spotify');
     const params = new URLSearchParams({
       response_type: 'code',
       client_id: SPOTIFY_CLIENT_ID,
@@ -775,6 +836,7 @@ const Spotify = {
   async logout(){
     this.token = null; this.refresh = null; this.expiresAt = 0;
     await kvSet('spotify_token', null);
+    if (typeof Cloud!=='undefined' && Cloud.user){ Cloud.clearSpotifyToken().catch(()=>{}); }
     if (this.player){ try{ this.player.disconnect(); }catch(e){} this.player = null; }
     this.ready = false; this._updateUI();
     $('#nowTitle').textContent = 'Not playing';
@@ -933,8 +995,8 @@ const App = {
       const end = next ? next.start-1 : total;
       const btn = document.createElement('button');
       btn.className = 'section-btn ' + s.themeClass;
-      btn.innerHTML = `<div class="lbl">${s.label}</div><div class="meta">Tracks ${s.start}–${end} · ${end-s.start+1} songs</div>`;
-      btn.addEventListener('click', () => this.playSection(i));
+      btn.innerHTML = `<div class="lbl">${s.label}</div><div class="meta">Tracks ${s.start}–${end} · ${end-s.start+1} songs · tap to browse</div>`;
+      btn.addEventListener('click', () => this.openSectionSongs(i));
       grid.appendChild(btn);
     });
   },
@@ -948,6 +1010,41 @@ const App = {
       await Spotify.playPlaylistFrom(pl.uri, start);
       toast('▶︎ ' + this.sections[i].label);
     }catch(e){ console.error(e); toast('Playback failed — '+e.message); }
+  },
+  /* v2: tap a section -> browse its songs, tap a song to play exactly that one */
+  async openSectionSongs(i){
+    if (!Spotify.token){ toast('Connect Spotify first'); return; }
+    let pl;
+    try{ pl = await Spotify.getSoftballPlaylist(); }
+    catch(e){ console.error(e); toast(e.message); return; }
+    const s = this.sections[i];
+    const next = this.sections[i+1];
+    const startIdx = Math.max(0, (s.start||1) - 1);
+    const endIdx = next ? Math.min(pl.tracks.length, next.start-1) : pl.tracks.length;
+    $('#songsTitle').textContent = s.label;
+    const list = $('#songsList'); list.innerHTML = '';
+    pl.tracks.slice(startIdx, endIdx).forEach((t, k) => {
+      const abs = startIdx + k;
+      const row = document.createElement('button');
+      row.className = 'song-row';
+      row.innerHTML = `<span class="idx">${abs+1}</span>` +
+        `<span class="t"><div class="n">${escapeHtml(t.name)}</div><div class="a">${escapeHtml(t.artist)}</div></span>` +
+        `<span class="go">▶︎</span>`;
+      row.addEventListener('click', async () => {
+        try{
+          await Spotify.setShuffle(false);
+          await Spotify.playPlaylistFrom(pl.uri, abs);
+          $('#modalSongs').classList.remove('open');
+          toast('▶︎ ' + t.name);
+        }catch(e){ console.error(e); toast('Playback failed — '+e.message); }
+      });
+      list.appendChild(row);
+    });
+    $('#btnPlaySection').onclick = () => {
+      $('#modalSongs').classList.remove('open');
+      this.playSection(i);
+    };
+    $('#modalSongs').classList.add('open');
   },
 
   /* -------- SOUNDS -------- */
@@ -1558,6 +1655,224 @@ async function wipeAll(){
 }
 
 /* ============================================================================
+   CLOUD — Supabase: Google sign-in + cross-device sync (v2)
+   ============================================================================ */
+const SUPABASE_URL = 'https://biwhntpqtdxarvmhprir.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_0cRau3c0Buhst6f0iGOR1g_STZe2Rru';
+
+const Cloud = {
+  sb: null,
+  user: null,
+  _t: null,
+  busy: false,
+
+  init(){
+    if (!window.supabase){ console.warn('supabase-js failed to load'); return; }
+    this.sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
+      auth: { detectSessionInUrl: false, flowType: 'pkce', storageKey: 'dd_sb_auth' }
+    });
+  },
+
+  /* Handle the Google OAuth return (flag-gated so Spotify's ?code= is untouched),
+     restore session, then sync. */
+  async start(){
+    if (!this.sb) return;
+    const url = new URL(location.href);
+    const code = url.searchParams.get('code');
+    if (code && localStorage.getItem('dd_auth_pending') === 'supabase'){
+      localStorage.removeItem('dd_auth_pending');
+      try{ await this.sb.auth.exchangeCodeForSession(code); }
+      catch(e){ console.warn(e); toast('Google sign-in failed'); }
+      url.searchParams.delete('code'); url.searchParams.delete('state');
+      history.replaceState({}, '', url.pathname);
+    }
+    const { data: { session } } = await this.sb.auth.getSession();
+    this.user = session ? session.user : null;
+    this.sb.auth.onAuthStateChange((_ev, s) => {
+      const had = !!this.user;
+      this.user = s ? s.user : null;
+      this._updateUI();
+      if (!had && this.user) this.fullSync().catch(e=>console.warn(e));
+    });
+    this._updateUI();
+    if (this.user) await this.fullSync().catch(e=>console.warn(e));
+  },
+
+  login(){
+    if (!this.sb){ toast('Cloud unavailable'); return; }
+    localStorage.setItem('dd_auth_pending', 'supabase');
+    this.sb.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: REDIRECT_URI } });
+  },
+  async logout(){
+    try{ await this.sb.auth.signOut(); }catch(e){}
+    this.user = null; this._updateUI();
+    toast('Signed out — local data kept on this device');
+  },
+  _updateUI(){
+    const el = $('#cloudStatus');
+    if (el) el.textContent = this.user
+      ? ('Signed in as ' + (this.user.email || 'Google user') + ' — syncing across devices.')
+      : 'Not signed in — data stays on this device only.';
+    const b = $('#btnCloud');
+    if (b) b.style.color = this.user ? 'var(--accent)' : '';
+  },
+
+  /* Debounced push after local edits */
+  schedule(){
+    if (!this.user) return;
+    clearTimeout(this._t);
+    this._t = setTimeout(() => this.syncUp().catch(e=>console.warn(e)), 1200);
+  },
+
+  /* ---- blob <-> storage helpers (per-user folder: {uid}/{blobId}) ---- */
+  async _ensureUploaded(blobId){
+    if (!blobId || !this.user) return null;
+    const map = await kvGet('cloud_paths', {});
+    if (map[blobId]) return map[blobId];
+    const blob = await blobGet(blobId);
+    if (!blob) return null;
+    const path = this.user.id + '/' + blobId;
+    const { error } = await this.sb.storage.from('dugout-clips')
+      .upload(path, blob, { upsert: true, contentType: blob.type || 'audio/mpeg' });
+    if (error){ console.warn('upload failed', error); return null; }
+    map[blobId] = path;
+    await kvSet('cloud_paths', map);
+    return path;
+  },
+  async _ensureLocal(path){
+    if (!path) return null;
+    const map = await kvGet('cloud_paths', {});
+    for (const [bid, p] of Object.entries(map)){
+      if (p === path){ const b = await blobGet(bid); if (b) return bid; }
+    }
+    const { data, error } = await this.sb.storage.from('dugout-clips').download(path);
+    if (error || !data){ console.warn('download failed', error); return null; }
+    const bid = path.split('/').pop();
+    await blobPut(bid, data);
+    map[bid] = path;
+    await kvSet('cloud_paths', map);
+    return bid;
+  },
+
+  /* ---- push local state to cloud ---- */
+  async syncUp(){
+    if (!this.user || this.busy) return;
+    this.busy = true;
+    try{
+      for (const p of App.players){
+        const walk = await this._ensureUploaded(p.walkupBlobId);
+        const ann  = await this._ensureUploaded(p.annBlobId);
+        const mix  = await this._ensureUploaded(p.mixBlobId);
+        await this.sb.from('dugout_players').upsert({
+          id: p.id, user_id: this.user.id,
+          name: p.name || 'Player', jersey: p.num || '',
+          walkup_path: walk, ann_path: ann, mixed_path: mix,
+          sort: p.order ?? 0,
+          updated_at: new Date(p.updatedAt || Date.now()).toISOString()
+        });
+      }
+      for (const pad of App.pads){
+        const clip = await this._ensureUploaded(pad.blobId);
+        await this.sb.from('dugout_pads').upsert({
+          id: pad.id, user_id: this.user.id,
+          label: pad.label || 'Pad', clip_path: clip, sort: 0,
+          updated_at: new Date(pad.updatedAt || Date.now()).toISOString()
+        });
+      }
+      const cfg = { sections: App.sections, shuffle: App.shuffle, ttsAnnounce: App.ttsAnnounce };
+      await this.sb.from('dugout_settings').upsert({
+        user_id: this.user.id,
+        spotify_refresh_token: Spotify.refresh || null,
+        config: cfg,
+        updated_at: new Date().toISOString()
+      });
+    } finally {
+      this.busy = false;
+    }
+  },
+  async deleteRow(table, id){
+    if (!this.user) return;
+    try{ await this.sb.from(table).delete().eq('id', id); }catch(e){ console.warn(e); }
+  },
+  async clearSpotifyToken(){
+    if (!this.user) return;
+    try{ await this.sb.from('dugout_settings').upsert({ user_id: this.user.id, spotify_refresh_token: null, updated_at: new Date().toISOString() }); }
+    catch(e){ console.warn(e); }
+  },
+
+  /* ---- two-way sync: pull cloud, merge newer-wins, then push ---- */
+  async fullSync(){
+    if (!this.user) return;
+    toast('Syncing…');
+
+    // SETTINGS first — may hold the Spotify connection for silent reconnect
+    try{
+      const { data: st } = await this.sb.from('dugout_settings').select('*').maybeSingle();
+      if (st){
+        if (st.config && st.config.sections && !(await kvGet('sections'))){
+          App.sections = st.config.sections;
+          await dbPutRaw('kv', { id:'sections', value: App.sections });
+        }
+        if (st.spotify_refresh_token && !Spotify.token){
+          Spotify.refresh = st.spotify_refresh_token;
+          try{
+            await Spotify._refreshToken();
+            Spotify._loadSdk();
+            Spotify._updateUI();
+            toast('Spotify connected automatically');
+          }catch(e){ console.warn('cloud spotify reconnect failed', e); }
+        }
+      }
+    }catch(e){ console.warn(e); }
+
+    // PLAYERS — newer-wins merge by id
+    try{
+      const { data: cp } = await this.sb.from('dugout_players').select('*');
+      const localById = Object.fromEntries(App.players.map(p=>[p.id,p]));
+      for (const r of (cp || [])){
+        const lp = localById[r.id];
+        const cloudTime = new Date(r.updated_at).getTime();
+        if (!lp || cloudTime > (lp.updatedAt || 0)){
+          const np = lp || { id: r.id };
+          np.name = r.name; np.num = r.jersey; np.order = r.sort ?? 0; np.updatedAt = cloudTime;
+          np.walkupBlobId = r.walkup_path ? await this._ensureLocal(r.walkup_path) : (lp ? lp.walkupBlobId : null);
+          np.annBlobId    = r.ann_path    ? await this._ensureLocal(r.ann_path)    : (lp ? lp.annBlobId : null);
+          np.mixBlobId    = r.mixed_path  ? await this._ensureLocal(r.mixed_path)  : (lp ? lp.mixBlobId : null);
+          await dbPutRaw('players', np);
+        }
+      }
+      App.players = await dbAll('players');
+      App.players.sort((a,b)=> (a.order??0) - (b.order??0));
+    }catch(e){ console.warn(e); }
+
+    // PADS — newer-wins merge by id
+    try{
+      const { data: cpads } = await this.sb.from('dugout_pads').select('*');
+      const padById = Object.fromEntries(App.pads.map(p=>[p.id,p]));
+      for (const r of (cpads || [])){
+        const lp = padById[r.id];
+        const cloudTime = new Date(r.updated_at).getTime();
+        if (!lp || cloudTime > (lp.updatedAt || 0)){
+          const np = lp || { id: r.id };
+          np.label = r.label; np.updatedAt = cloudTime;
+          np.blobId = r.clip_path ? await this._ensureLocal(r.clip_path) : (lp ? lp.blobId : null);
+          await dbPutRaw('pads', np);
+        }
+      }
+      App.pads = await dbAll('pads');
+    }catch(e){ console.warn(e); }
+
+    App.renderLineup();
+    App.renderPads();
+    App.renderSections();
+
+    // push anything the cloud is missing
+    await this.syncUp();
+    toast('Sync complete');
+  }
+};
+
+/* ============================================================================
    WIRE UI
    ============================================================================ */
 window.addEventListener('DOMContentLoaded', async () => {
@@ -1609,6 +1924,18 @@ window.addEventListener('DOMContentLoaded', async () => {
     renderSectionsEditor(); App.renderSections();
   });
   $('#btnWipe').addEventListener('click', wipeAll);
+
+  // cloud account (v2)
+  $('#btnCloud').addEventListener('click', () => {
+    if (Cloud.user){ renderSectionsEditor(); $('#modalAdmin').classList.add('open'); }
+    else Cloud.login();
+  });
+  $('#btnCloudLogin').addEventListener('click', () => Cloud.login());
+  $('#btnCloudLogout').addEventListener('click', () => Cloud.logout());
+  $('#btnSyncNow').addEventListener('click', () => Cloud.user ? Cloud.fullSync().catch(e=>toast(e.message)) : toast('Sign in first'));
+
+  // songs modal (v2)
+  $('#songsClose').addEventListener('click', () => $('#modalSongs').classList.remove('open'));
 
   // sounds
   $('#btnAddPad').addEventListener('click', () => App.addPad());
@@ -1714,7 +2041,10 @@ window.addEventListener('DOMContentLoaded', async () => {
   // initial sections render with default count (will re-render after fetch)
   App.renderSections();
 
-  // start Spotify (handles auth callback if returning from login)
+  // v2: cloud first (handles Google callback + may silently restore Spotify),
+  // then Spotify (handles its own callback, flag-gated).
+  Cloud.init();
+  await Cloud.start();
   await Spotify.init();
 
   // auto-load playlist if logged in
@@ -1724,6 +2054,9 @@ window.addEventListener('DOMContentLoaded', async () => {
       App.renderSections(pl);
     }catch(e){ /* may simply not be loaded yet */ }
   }
+
+  // gentle nudge to enable sync
+  if (!Cloud.user) setTimeout(()=> toast('Tip: tap ☁ to sign in and sync across devices', 3500), 1500);
 });
 </script>
 </body>
