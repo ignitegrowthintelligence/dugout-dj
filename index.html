@@ -1565,11 +1565,27 @@ const Mixer = {
     if (!this.songBlob){ toast('Set a walk-up song first'); $('#modalMixer').classList.remove('open'); return; }
     this.song = await decodeBlob(this.songBlob);
     if (this.annBlob) this.ann = await decodeBlob(this.annBlob);
-    // v3: default to the first 30 seconds of the song
-    this.clipStart = 0;
-    this.clipEnd = Math.min(30, this.song.duration);
-    this.annStart = this.clipStart + Math.min((this.clipEnd - this.clipStart) * 0.2, 4);
-    this.manualPoints = null; // start clean in auto
+    // v3.2: restore this player's last-saved mix settings, else default to first 30s
+    const ms = p.mixSettings;
+    const songDur = this.song.duration;
+    if (ms && typeof ms.clipStart === 'number' && typeof ms.clipEnd === 'number' && ms.clipStart < songDur){
+      this.clipStart = Math.max(0, Math.min(ms.clipStart, Math.max(0, songDur - 3)));
+      this.clipEnd = Math.max(this.clipStart + 3, Math.min(ms.clipEnd, songDur));
+      this.annStart = Math.max(this.clipStart, Math.min((typeof ms.annStart === 'number' ? ms.annStart : this.clipStart), this.clipEnd));
+      this.params = Object.assign({}, this.params, ms.params || {});
+      this.mode = (ms.mode === 'manual' && Array.isArray(ms.manualPoints) && ms.manualPoints.length >= 2) ? 'manual' : 'auto';
+      this.manualPoints = this.mode === 'manual'
+        ? ms.manualPoints.map(pt => ({ t: Math.max(this.clipStart, Math.min(this.clipEnd, pt.t)), v: Math.max(0, Math.min(1, pt.v)) }))
+        : null;
+      toast('Restored your last mix settings');
+    } else {
+      this.clipStart = 0;
+      this.clipEnd = Math.min(30, songDur);
+      this.annStart = this.clipStart + Math.min((this.clipEnd - this.clipStart) * 0.2, 4);
+      this.mode = 'auto';
+      this.manualPoints = null; // start clean in auto
+    }
+    $$('#modeToggle button').forEach(b => b.classList.toggle('on', b.dataset.mode === this.mode));
     this.canvas = $('#mixCanvas'); this.ctx = this.canvas.getContext('2d');
     this._fitCanvas();
     this._bindCanvas();
@@ -1953,6 +1969,12 @@ const Mixer = {
     if (p.mixBlobId) await blobDel(p.mixBlobId);
     p.mixBlobId = uuid();
     await blobPut(p.mixBlobId, blob);
+    // v3.2: remember the mixer state for next time this player's mix is opened
+    p.mixSettings = {
+      clipStart: this.clipStart, clipEnd: this.clipEnd, annStart: this.annStart,
+      mode: this.mode, params: { ...this.params },
+      manualPoints: this.manualPoints ? this.manualPoints.map(pt => ({ t: pt.t, v: pt.v })) : null
+    };
     await dbPut('players', p);
     App.renderLineup();
     toast('Mix saved');
@@ -2000,31 +2022,7 @@ function encodeWav(audioBuffer){
 
 /* ============================================================================
    ADMIN UI — sections editor, wipe, etc.
-   ============================================================================ */
-function renderSectionsEditor(){
-  const wrap = $('#sectionsEditor'); wrap.innerHTML = '';
-  App.sections.forEach((s, idx) => {
-    const row = document.createElement('div');
-    row.className = 'row'; row.style.gap = '8px'; row.style.marginBottom='6px';
-    row.innerHTML = `
-      <input type="text" value="${escapeHtml(s.label)}" data-k="label" style="flex:2">
-      <input type="number" value="${s.start}" data-k="start" style="flex:1; max-width: 90px">
-    `;
-    row.querySelectorAll('input').forEach(inp => {
-      inp.addEventListener('change', () => {
-        const k = inp.dataset.k;
-        App.sections[idx][k] = k==='start' ? parseInt(inp.value,10) || 1 : inp.value;
-      });
-    });
-    wrap.appendChild(row);
-  });
-}
-async function wipeAll(){
-  if (!confirm('Wipe all local data (pads, lineup, mix files, Spotify token)? This cannot be undone.')) return;
-  await new Promise(res => { const r = indexedDB.deleteDatabase(DB_NAME); r.onsuccess = r.onerror = r.onblocked = () => res(); });
-  location.reload();
-}
-
+   ===
 /* ============================================================================
    CLOUD — Supabase: Google sign-in + cross-device sync (v2)
    ============================================================================ */
@@ -2147,6 +2145,7 @@ const Cloud = {
           id: p.id, user_id: this.user.id,
           name: p.name || 'Player', jersey: p.num || '',
           team_id: p.teamId || null,
+          mix_settings: p.mixSettings || null,
           walkup_path: walk, ann_path: ann, mixed_path: mix,
           sort: p.order ?? 0,
           updated_at: new Date(p.updatedAt || Date.now()).toISOString()
@@ -2235,6 +2234,7 @@ const Cloud = {
           const np = lp || { id: r.id };
           np.name = r.name; np.num = r.jersey; np.order = r.sort ?? 0; np.updatedAt = cloudTime;
           np.teamId = r.team_id || (lp ? lp.teamId : null);
+          np.mixSettings = r.mix_settings || (lp ? lp.mixSettings : null);
           np.walkupBlobId = r.walkup_path ? await this._ensureLocal(r.walkup_path) : (lp ? lp.walkupBlobId : null);
           np.annBlobId    = r.ann_path    ? await this._ensureLocal(r.ann_path)    : (lp ? lp.annBlobId : null);
           np.mixBlobId    = r.mixed_path  ? await this._ensureLocal(r.mixed_path)  : (lp ? lp.mixBlobId : null);
