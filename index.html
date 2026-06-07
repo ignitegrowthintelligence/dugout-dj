@@ -949,6 +949,181 @@ const DEFAULT_SECTIONS = [
   { id:'walkoff',  label:'Walk-off / Deep cuts', start: 155, themeClass:'theme-walkoff' },
 ];
 
+/* v6.3: baked-in audio features — [energy, danceability, valence], 0-1 scale,
+   matching Spotify's feature semantics. Spotify removed /audio-features for
+   newer API apps (403), which left Today's Set sequencing blind (every track
+   fell back to 0.5). Hand-scored per track; used as fallback whenever the
+   live endpoint can't supply data. Keyed by bare track ID. */
+const BAKED_FEATURES = {
+'2HHtWyy5CgaQbC7XSoOb0e':[.74,.82,.55], // Eye of the Tiger
+'7i6r9KotUPQg3ozKKgEPIN':[.50,.74,.30], // Seven Nation Army
+'57bgtoPSgt236HzfBOd8kj':[.89,.50,.36], // Thunderstruck
+'54flyrjcdnQdco7300avMJ':[.48,.69,.47], // We Will Rock You
+'5f7KV4oOHZylrpa5XKFu6G':[.72,.66,.96], // Centerfield
+'57JVGBtBLCfHw2muk5416J':[.53,.93,.76], // Another One Bites The Dust
+'22skzmqfdWrjJylampe0kt':[.92,.64,.84], // Can't Hold Us
+'6b8Be6ljOzmkOmFslEb23P':[.80,.82,.63], // 24K Magic
+'32OlwWuMpZ6b0aN2RZOeMS':[.81,.86,.93], // Uptown Funk
+'3cfOd4CMv2snFaKAnMdnvK':[.87,.63,.78], // All Star
+'003vvx7Niy0yvhvHt4a68B':[.92,.36,.23], // Mr. Brightside
+'6Qn5zhYkTa37e91HC1D7lb':[.66,.67,.53], // Whatever It Takes
+'1zB4vmk8tFRmM9UULNzbLB':[.81,.60,.29], // Thunder
+'21qnJAMtzC6S5SESuqQLEK':[.86,.86,.85], // Pump Up The Jam
+'5xTtaWoae3wi06K5WfVUUH':[.80,.65,.94], // Shake It Off
+'2hopb3OJKYhhZ6L4ca9pBp':[.97,.73,.96], // Hey Ya!
+'4jTqsgDaffdNH0BMBwhjFv':[.82,.69,.78], // I Love Rock 'N Roll
+'7ACxUo21jtTHzy7ZEV56vU':[.92,.45,.55], // Crazy Train
+'08mG3Y1vljYA6bvDt4Wqkj':[.70,.31,.76], // Back In Black
+'2zYzyRzz6pRmhPzyfMEC8s':[.91,.57,.42], // Highway to Hell
+'7snQQk1zcKl8gZ92AnueZW':[.91,.45,.59], // Sweet Child O' Mine
+'7J1uxwnxfQLu4APicE5Rnj':[.65,.92,.84], // Billie Jean
+'3BovdzfaX4jb5KFQwoPfAw':[.87,.78,.79], // Beat It
+'4qRaZYiaOsSvWC7VgcxrI0':[.79,.69,.66], // HandClap
+'6QgjcU0zLnzq5OrUoSZ3OK':[.80,.78,.94], // Feel It Still
+'4h4QlmocP3IuwYEj2j14p8':[.77,.72,.92], // Sunroof
+'4ofwffwvvnbSkrMSCKQDaC':[.72,.78,.65], // Shotgun
+'4r6eNCsrZnQWJzzvFh4nlg':[.83,.64,.65], // Firework
+'0lHAMNU8RGiIObScrsRgmP':[.79,.60,.30], // Titanium
+'1gihuPhrLraKYrJMAEONyc':[.92,.71,.69], // Feel So Close
+'3cHyrEgdyYRjgJKSOiOtcS':[.96,.58,.79], // Timber
+'4Y7XAxTANhu3lmnLAzhWJW':[.91,.70,.94], // Fireball
+'0HPD5WQqrq7wPWR7P7Dw1i':[.84,.76,.71], // TiK ToK
+'0ByMNEPAPpOR5H69DVrTNy':[.72,.79,.60], // Don't Stop The Music
+'30cSNer6TV8x2utjULVeQ5':[.91,.69,.55], // SOS
+'0dvYprV2t3UA0MDc4nUuAY':[.72,.75,.75], // Starships
+'5rb9QrpfcKFHM1EUbSIurX':[.79,.89,.66], // Yeah!
+'3pHJItyZxzCpPUgksGLRsu':[.72,.90,.78], // In Da Club
+'5IGUkmuTVroDG2PnaUiNFj':[.88,.78,.92], // It's Tricky
+'6uQKuonTU8VKBz5SHZuQXD':[.84,.85,.92], // This Is How We Do It
+'0Jg602cHeMCnPez9baacIe':[.92,.62,.78], // Cotton Eye Joe
+'79L3KLOzsUoXqNphyy6Wlm':[.89,.85,.85], // Whoomp! There It Is
+'5dW1VZPcFqB4n0P08rGDgm':[.74,.85,.86], // The Git Up
+'5WSnrNkoTkvIz3DBmIfIEm':[.74,.83,.78], // Cha Cha Slide
+'07Tx168RSsUS1HqkDIOZbH':[.62,.84,.86], // Cupid Shuffle
+'3OPcnA0I7z5gy5Pjgn9Z48':[.72,.85,.79], // Wobble
+'2XU0oxnq2qxCpomAAuJY8K':[.59,.82,.54], // Dance Monkey
+'1rqqCSm0Qe4I9rUvWncaom':[.90,.58,.68], // High Hopes
+'3mRM4NM8iO7UBqrSigCQFH':[.81,.70,.96], // Stayin' Alive
+'4Cv6ongCvJy9JfSkWVnb5D':[.74,.86,.92], // Get Down On It
+'1KBuhAHzia2qoD4u6YhvER':[.85,.56,.74], // Stiff Upper Lip
+'7LRMbd3LEoV5wZJvXT1Lwb':[.78,.54,.58], // T.N.T.
+'69QHm3pustz01CJRwdo20z':[.79,.46,.40], // Hells Bells
+'6eN1f9KNmiWEhpE2RhQqB5':[.94,.42,.55], // Paradise City
+'2gSNBigeWMVtY3QBIvPAEc':[.83,.83,.88], // Bad
+'5T7ywazdGIydr6JCW6t02j':[.92,.76,.88], // Smooth Criminal
+'2QfiRTz5Yc8DdShCxG1tB2':[.80,.55,.95], // Johnny B. Goode
+'6kooDsorCpWVMGc994XjWN':[.92,.50,.61], // Black Betty
+'6ZOBP3NvffbU4SZcrnt1k6':[.83,.55,.62], // Kryptonite
+'6SjbzGo7arjfM5cXpXhc5B':[.83,.65,.78], // Should I Stay or Should I Go
+'6W2VbtvMrDXm5vYeB7amkO':[.92,.71,.96], // Footloose
+'0vYfKwaIDwY0IcKbMcqcY5':[.91,.50,.72], // Smells Like Teen Spirit
+'1FTSo4v6BOZH9QxKc3MbVM':[.97,.43,.59], // Song 2
+'2hnMS47jN0etwvFPzYk11f':[.62,.65,.80], // Santeria
+'37EJtTS7jT5WUyXGZzrwnI':[.90,.49,.55], // Santa Monica
+'44wXefe8WB9Fd6xwtmAwbR':[.97,.44,.50], // Monkey Wrench
+'1Wsq4R07S4vh6Yg5kYUVse':[.84,.59,.78], // My Own Worst Enemy
+'6XK6Zw6JkFsHXzAcMWNiIr':[.85,.62,.81], // Send Me On My Way
+'27L8sESb3KR79asDUBu8nW':[.93,.60,.76], // Stacy's Mom
+'6GG73Jik4jUlQCkKg9JuGO':[.91,.60,.86], // The Middle
+'429IbFR4yp2J81CeTwF5iY':[.92,.51,.62], // Sweetness
+'1HNE2PX70ztbEl6MLxrpNL':[.88,.54,.62], // In Too Deep
+'003FTlCpBTM4eSqYSWPv4H':[.86,.51,.62], // Swing, Swing
+'0BRHnOFm6sjxN1i9LJrUDu':[.93,.51,.69], // The Anthem
+'00Mb3DuaIH1kjrwOku9CGU':[.90,.52,.49], // Sk8er Boi
+'2Mb3zpobD0CvJGWv6NpsPy':[.78,.81,.75], // T.R.O.Y.
+'1gSDTZHemEViEBiXysrlo0':[.69,.84,.75], // Can I Kick It?
+'1uAwfDonpvw6Z4OsITZzzA':[.69,.90,.66], // Hypnotize
+'5poguhkRoibjizdoAuo4so':[.68,.85,.45], // Christopher Wallace
+'2AP7m2dBb8ULTx4Gc1rdMc':[.73,.89,.71], // Juicy
+'70XFKYHg9OVJJJLxyfY7cN':[.85,.75,.85], // Mo Money Mo Problems
+'55iidKcV7570jUzlockime':[.89,.78,.65], // Party Up
+'3JlsUB5UZclm1MXYo4QV4O':[.83,.80,.70], // Ruff Ryders Anthem
+'3tHEJsKdVY8mg7YGDpUIFM':[.92,.92,.55], // The Next Episode
+'6MdqqkQ8sSC0WB4i8PyRuQ':[.62,.82,.59], // No Diggity
+'43PBE5b3RJgwfi1i9xKtEs':[.69,.65,.69], // Gold Digger
+'76mzio0HuYMaCfIDd5EU1w':[.88,.55,.49], // POWER
+'1tSjFlsXMVAyjmMRGxj2Lc':[.85,.49,.81], // Empire State Of Mind
+'7ugR215Udib8EUcv3NTI9D':[.79,.69,.60], // Numb / Encore
+'5IVuqXILoxVWvWEPm82Jxr':[.78,.66,.70], // Crazy In Love
+'37rKwjBHaZurlyPYy3Nqvz':[.53,.78,.66], // Thrift Shop
+'5l6Q7cvgws8TJ46uzCyBn9':[.84,.75,.71], // Roses
+'6e8Ou0wiqAzIpWb2eSxll8':[.83,.79,.86], // Miami
+'7FY792QkRXQP7floFeEcph':[.79,.80,.70], // Batter Up
+'66TRwr5uJwPt15mfFkzhbi':[.74,.74,.86], // Crank That
+'1syUzVGMgU1QLy751IqeYN':[.52,.80,.49], // Started From the Bottom
+'1bLjm7Gqjbuv57OxZdhLrP':[.81,.63,.49], // Congratulations
+'11d9oUiwHuYt216EFA2tiz':[.62,.91,.75], // Ice Ice Baby
+'3LklW07tvdx2AHsgfi1Mng':[.66,.85,.80], // I Wish (Skee-Lo)
+'0KYvKBPyCGcowHpiUMRUmg':[.83,.72,.65], // Fast Lane
+'2JXlRVBgLHqhfphmjXyVBZ':[.94,.72,.46], // Not Afraid
+'6p4SUKhIyPqbmU828M0JWD':[.85,.76,.30], // 'Till I Collapse
+'0LNRITR48MhSoslbC8RkND':[.78,.86,.70], // I Look Good
+'2KtGiBi5CrX2ERPD2PAS34':[.85,.62,.72], // Dancin' In The Country
+'6s9m5J92By7jii22Q2XtY2':[.86,.55,.56], // Somethin' Bad
+'2FfZg072w8RoxlMOR7M4CT':[.85,.56,.72], // Ants Marching
+'4fXoeBGrVWfNKpdcmL8tw6':[.86,.48,.66], // Tripping Billies
+'2Ou1Hyvr08mr0pZauPvv6j':[.74,.52,.45], // Two Step
+'0oGnHTdtPTgTqTJVeWw0EU':[.62,.55,.50], // Arcadia
+'5FKKjiUjOXu9Kinlkc1VzA':[.55,.52,.42], // Hungersite
+'5q0tEnGTYUMilLSxyPYUMt':[.58,.50,.45], // Echo of a Rose
+'5boh3WTOJ1aOF6uUEF4HPh':[.90,.42,.60], // One Big Holiday
+'2Lk8XTulavagQOrYqFpGB8':[.78,.55,.70], // Dust in a Baggie
+'6D8y7Bck8h11byRY88Pt2z':[.88,.74,.86], // Houdini
+'0k2GOhqsrxDTAbFFSdNJjT':[.82,.93,.76], // Temperature
+'3QRM0qZB7oMYavveH0iEqx':[.74,.90,.84], // Here Comes the Hotstepper
+'66ZcOcouenzZEnzTJvoFmH':[.71,.65,.77], // The Sweet Escape
+'1KGi9sZVMeszgZOWivFpxs':[.54,.76,.60], // No Scrubs
+'2yPoXCs7BSIUrucMdK5PzV':[.83,.58,.58], // Umbrella
+'5lWRaa0fBxDE5yU91npPq7':[.94,.58,.78], // Just A Girl
+'5jzKL4BDMClWqRguW5qZvh':[.80,.72,.59], // Teenage Dream
+'7EQGXaVSyEDsCWKmUcfpLk':[.74,.76,.68], // Die Young
+'1jDJFeK9x3OZboIAHsY9k2':[.84,.66,.86], // I'm Still Standing
+'0DiWol3AO6WpXZgp0goxAV':[.84,.61,.69], // One More Time
+'5W3cjX2J3tjhG8zb6u0qHn':[.71,.82,.66], // Harder, Better, Faster, Stronger
+'3d0WouFnFmr0K3kjeza3fF':[.76,.78,.81], // Hips Don't Lie
+'0kosUz0jePvjiz4ctmR6wL':[.78,.80,.75], // Dai Dai
+'7e4zDInS6tA2jwzphvs2Ay':[.85,.86,.70], // Jamaican (Bam Bam)
+'0RiRZpuVRbi7oqRdSMwhQY':[.52,.76,.91], // Sunflower
+'6YbhspuOar1D9WSSnfe7ds':[.54,.80,.86], // Young, Wild & Free
+'4cG2I0ouHItPqRG1ZDbYxC':[.78,.74,.40], // Pure Water
+'1WkMMavIMc4JZ8cfMmxHkI':[.82,.67,.93], // Can't Stop The Feeling!
+'3nlVjrlLMJHC7Flf9impf9':[.75,.71,.78], // Dancing In The Dark
+'4wHCS1sbcLEwHPJukcoskE':[.78,.88,.80], // The Chicken Wing Beat
+'28OhxihUml7LMw24NqGyCH':[.80,.78,.70], // Don't Mess With Me (Jellyfishing)
+'68mG7AwXBzIXTC47HlRN19':[.74,.78,.55], // Big Dawgs
+'0cVyQfDyRnMJ0V3rjjdlU3':[.72,.80,.90], // Lil Boo Thang
+'5L2R2zASCgsxfYaeszNXbL':[.84,.79,.68], // edamame
+'5OaFjCQr4yahvGsUKoWmdZ':[.74,.80,.75], // Ride
+'7EQjPEL70tzjlTgCgU0QrV':[.76,.82,.72], // Too Easy
+'3EDclKlSXDJsujVfM8bvL3':[.78,.84,.74], // Scoop
+'0EqCNwOxQcKvb09auddfyA':[.75,.82,.70], // Caveman
+'4ndD79H0yvMxXj82Kkqub4':[.72,.70,.72], // 1970
+'4KIRA3oOWWyYhuQkuoHnFr':[.80,.76,.60], // Game Time
+'0NLSSVbhgFtaPOcxAcuKkA':[.74,.68,.65], // Lighter
+'6BCfiLJobjb2Y52tohEnHi':[.70,.78,.66], // Tipsy in Black
+'4Tw3GI2MiqXP65X0Z8rP7U':[.91,.71,.82], // I Love It
+'7oAZVxmRCVFanxK7tk16vv':[.88,.72,.71], // Bring Em Out
+'4hfIVhq0F0zFUcrbecsYmo':[.86,.74,.79], // Let's Get It Started
+'1ixbwbeBi5ufN4noUKmW5a':[.69,.76,.60], // Paper Planes
+'4BggEwLhGfrbrl7JBhC8EC':[.85,.70,.74], // Butterfly
+'6m59VvDUi0UQsB2eZ9wVbH':[.85,.83,.80], // Poison
+'5rTcQ0Mw0YxGEMLVlwzOdm':[.82,.74,.62], // Til I Die
+'1KBN9lYx9QkfUJC3NSXlhQ':[.86,.74,.84], // Ooh Ahh
+'12cZWGf5ZgLcKubEW9mx5q':[.78,.66,.48], // HOPE
+'4tZDUt8vHpvjfOXcHwOvtq':[.84,.76,.40], // The Search
+'7wmPlwzYZ4ZNuwxE5EXSZ3':[.84,.72,.70], // I Like To Win
+'1FYd1szE0RHXOAM00V4MEx':[.88,.70,.62], // Coming In Hot
+'687YZan9Gol1UVvbpUSO6Y':[.74,.84,.92], // I Wish (Stevie Wonder)
+'1HZ3cUZUw5htSFmah1V8Ko':[.74,.50,.50], // Shine
+'1dzrG2Vo2LNH4vAQBHxqrT':[.55,.66,.45], // Flower
+'5ZBUC1YafitJgLt8dgZYTW':[.50,.60,.55], // Someday Baby
+'22g4XtPoAnhI5npNLXtNUm':[.75,.60,.35], // Run You
+'5EPfDGkdwRx801NTxrnpia':[.85,.40,.45], // Tweezer - Reprise
+'26gyeGHCdZHhZSLr5A08Rs':[.70,.50,.55], // Factory Fiction
+'3Wrjm47oTz2sjIgck11l5e':[.80,.71,.59], // Beggin'
+'6UelLqGlWMcVH1E5c4H7lY':[.82,.55,.56], // Watermelon Sugar
+};
+
 /* ============================================================================
    SPOTIFY (PKCE) + Web Playback SDK
    ============================================================================ */
@@ -1325,9 +1500,17 @@ const Spotify = {
       else missing.push(u);
     }
     if (!missing.length) return out;
+    // v6.3: baked-in fallback first — Spotify 403s /audio-features for newer apps
+    const stillMissing = [];
+    for (const u of missing){
+      const b = BAKED_FEATURES[u.replace(/^spotify:track:/,'')];
+      if (b) out.set(u, { id: u, energy: b[0], danceability: b[1], valence: b[2], tempo: null });
+      else stillMissing.push(u);
+    }
+    if (!stillMissing.length) return out;
     // batch in chunks of 100
-    for (let i = 0; i < missing.length; i += 100){
-      const chunk = missing.slice(i, i+100);
+    for (let i = 0; i < stillMissing.length; i += 100){
+      const chunk = stillMissing.slice(i, i+100);
       const ids = chunk.map(u => u.replace(/^spotify:track:/,'')).join(',');
       try{
         const j = await this.api('GET', '/audio-features?ids=' + encodeURIComponent(ids));
