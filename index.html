@@ -600,16 +600,28 @@
       <button class="btn small ghost" id="btnFullSong">Use full song</button>
     </div>
 
-    <div class="mixer-sliders">
-      <label class="field"><span>Duck depth <em id="lblDepth">0.20</em></span>
-        <input type="range" id="sDepth" min="0" max="1" step="0.01" value="0.20"></label>
-      <label class="field"><span>Ramp-down (s) <em id="lblRdown">0.50</em></span>
-        <input type="range" id="sRdown" min="0" max="3" step="0.05" value="0.50"></label>
-      <label class="field"><span>Ramp-up (s) <em id="lblRup">1.00</em></span>
-        <input type="range" id="sRup" min="0" max="5" step="0.05" value="1.00"></label>
-      <label class="field"><span>Announcement vol <em id="lblAvol">1.00</em></span>
-        <input type="range" id="sAvol" min="0" max="1.5" step="0.01" value="1.00"></label>
+    <div class="mixer-sliders" style="grid-template-columns: 1fr 1fr 1fr;">
+      <label class="field"><span>Start (m:ss)</span>
+        <input type="text" id="tStart" inputmode="numeric" placeholder="0:00" autocomplete="off"></label>
+      <label class="field"><span>End (m:ss)</span>
+        <input type="text" id="tEnd" inputmode="numeric" placeholder="0:30" autocomplete="off"></label>
+      <label class="field"><span>Length (sec)</span>
+        <input type="number" id="tLen" min="3" step="1" placeholder="30"></label>
     </div>
+
+    <details style="margin-top:10px">
+      <summary class="muted" style="font-size:12px; cursor:pointer">Duck &amp; volume settings</summary>
+      <div class="mixer-sliders">
+        <label class="field"><span>Duck depth <em id="lblDepth">0.20</em></span>
+          <input type="range" id="sDepth" min="0" max="1" step="0.01" value="0.20"></label>
+        <label class="field"><span>Ramp-down (s) <em id="lblRdown">0.50</em></span>
+          <input type="range" id="sRdown" min="0" max="3" step="0.05" value="0.50"></label>
+        <label class="field"><span>Ramp-up (s) <em id="lblRup">1.00</em></span>
+          <input type="range" id="sRup" min="0" max="5" step="0.05" value="1.00"></label>
+        <label class="field"><span>Announcement vol <em id="lblAvol">1.00</em></span>
+          <input type="range" id="sAvol" min="0" max="1.5" step="0.01" value="1.00"></label>
+      </div>
+    </details>
 
     <div class="muted" style="font-size:12px; margin-top: 10px">
       Drag the <span style="color:#2ee066">green</span> edge handles on the song to choose the clip
@@ -1538,6 +1550,9 @@ const Mixer = {
   // canvas geometry cache
   geom: { w:0, h:0, dur:0 },
   dragTarget: null,     // 'ann' | {kind:'pt', idx:n} | null
+  playhead: null,       // v3.1: absolute song-time of the moving playback line
+  _raf: null,
+  _static: null,        // v3.1: cached canvas with backgrounds + song waveform
 
   async open(playerId){
     this.playerId = playerId;
@@ -1572,6 +1587,26 @@ const Mixer = {
     this.ctx.setTransform(dpr,0,0,dpr,0,0);
     this.geom.w = cssW; this.geom.h = cssH;
     this.geom.dur = this.song ? this.song.duration : 0;
+    this._renderStatic();
+  },
+  /* v3.1: heavy song waveform rendered once to an offscreen layer so the
+     playhead can animate at full frame rate */
+  _renderStatic(){
+    if (!this.canvas || !this.geom.w) return;
+    const {w,h,dur} = this.geom;
+    const dpr = window.devicePixelRatio || 1;
+    if (!this._static) this._static = document.createElement('canvas');
+    this._static.width = w * dpr; this._static.height = h * dpr;
+    const c = this._static.getContext('2d');
+    c.setTransform(dpr,0,0,dpr,0,0);
+    const songTop = 10, songH = (h-20)*0.55;
+    const annTop = songTop + songH + 10, annH = (h-20)*0.45 - 10;
+    c.fillStyle = '#15191f'; c.fillRect(0, songTop, w, songH);
+    c.fillStyle = '#15191f'; c.fillRect(0, annTop, w, annH);
+    c.fillStyle = '#9aa4b2'; c.font='10px -apple-system, sans-serif';
+    c.fillText('SONG (' + this._mmss(dur) + ')', 6, songTop+12);
+    c.fillText('ANNOUNCEMENT' + (this.ann? ' ('+this._mmss(this.ann.duration)+')' : ' — none'), 6, annTop+12);
+    if (this.song) this._drawWave(this.song, 0, w, songTop+16, songH-18, '#7ee0a4', c);
   },
   _syncSliders(){
     $('#sDepth').value = this.params.depth; $('#lblDepth').textContent = fmt(this.params.depth);
@@ -1583,6 +1618,35 @@ const Mixer = {
   _updateClipLabel(){
     $('#lblClip').textContent = this._mmss(this.clipStart) + ' – ' + this._mmss(this.clipEnd);
     $('#lblClipLen').textContent = '(' + Math.round(this.clipEnd - this.clipStart) + 's)';
+    // v3.1: keep the typed fields in sync (don't clobber a field being edited)
+    const a = document.activeElement;
+    const set = (sel, val) => { const el = $(sel); if (el && el !== a) el.value = val; };
+    set('#tStart', this._mmss(this.clipStart));
+    set('#tEnd', this._mmss(this.clipEnd));
+    set('#tLen', Math.round(this.clipEnd - this.clipStart));
+  },
+  /* v3.1: central clip setter with clamps; accepts absolute seconds */
+  setClip(start, end){
+    const dur = this.song ? this.song.duration : 0;
+    start = Math.max(0, Math.min(isNaN(start)?0:start, Math.max(0, dur - 3)));
+    end = Math.max(start + 3, Math.min(isNaN(end)?dur:end, dur));
+    this.clipStart = start; this.clipEnd = end;
+    if (this.annStart < start) this.annStart = start;
+    const hi = Math.max(start, end - (this.ann ? this.ann.duration : 0));
+    if (this.annStart > hi) this.annStart = hi;
+    this.manualPoints = null;
+    this.draw();
+  },
+  _parseTime(s){
+    s = String(s||'').trim();
+    if (!s) return null;
+    if (s.includes(':')){
+      const parts = s.split(':').map(x=>parseFloat(x));
+      if (parts.some(isNaN)) return null;
+      return parts.length===2 ? parts[0]*60 + parts[1] : (parts.length===3 ? parts[0]*3600 + parts[1]*60 + parts[2] : parts[0]);
+    }
+    const v = parseFloat(s);
+    return isNaN(v) ? null : v;
   },
   useFullSong(){
     if (!this.song) return;
@@ -1629,16 +1693,8 @@ const Mixer = {
     // sections
     const songTop = 10, songH = (h-20)*0.55;
     const annTop = songTop + songH + 10, annH = (h-20)*0.45 - 10;
-    // backgrounds
-    c.fillStyle = '#15191f'; c.fillRect(0, songTop, w, songH);
-    c.fillStyle = '#15191f'; c.fillRect(0, annTop, w, annH);
-    // labels
-    c.fillStyle = '#9aa4b2'; c.font='10px -apple-system, sans-serif';
-    c.fillText('SONG (' + this._mmss(dur) + ')', 6, songTop+12);
-    c.fillText('ANNOUNCEMENT' + (this.ann? ' ('+this._mmss(this.ann.duration)+')' : ' — none'), 6, annTop+12);
-
-    // waveforms
-    if (this.song) this._drawWave(this.song, 0, w, songTop+16, songH-18, '#7ee0a4');
+    // v3.1: backgrounds + labels + song waveform come from the cached layer
+    if (this._static) c.drawImage(this._static, 0, 0, w, h);
 
     // v3: clip region — dim everything outside [clipStart, clipEnd], green trim handles
     const cx0 = (this.clipStart/dur)*w, cx1 = (this.clipEnd/dur)*w;
@@ -1676,9 +1732,18 @@ const Mixer = {
         c.beginPath(); c.arc(x, y, 6, 0, Math.PI*2); c.fill();
       });
     }
+
+    // v3.1: playback position line across both the song and announcement lanes
+    if (this.playhead != null && dur > 0){
+      const px = (this.playhead/dur)*w;
+      c.strokeStyle = 'rgba(255,255,255,0.92)'; c.lineWidth = 1.5;
+      c.beginPath(); c.moveTo(px, 4); c.lineTo(px, h-4); c.stroke();
+      c.fillStyle = 'rgba(255,255,255,0.92)';
+      c.beginPath(); c.moveTo(px-5, 4); c.lineTo(px+5, 4); c.lineTo(px, 12); c.closePath(); c.fill();
+    }
   },
-  _drawWave(buf, x, w, y, h, color){
-    const ctx = this.ctx;
+  _drawWave(buf, x, w, y, h, color, ctx){
+    ctx = ctx || this.ctx;
     const data = buf.getChannelData(0);
     const step = Math.max(1, Math.floor(data.length / Math.max(1, Math.floor(w))));
     ctx.strokeStyle = color; ctx.lineWidth = 1;
@@ -1836,11 +1901,26 @@ const Mixer = {
     }
     this.previewNodes = { song: songSrc, ann: annSrc, gSong, gAnn, startedAt: t0 };
     songSrc.onended = () => { if (this.previewNodes.song===songSrc) this.previewNodes.song = null; };
+
+    // v3.1: animate the playback position line across both lanes
+    cancelAnimationFrame(this._raf);
+    const tick = () => {
+      if (!this.previewNodes.song){ this.playhead = null; this.draw(); return; }
+      const pos = c0 + (ctx.currentTime - t0);
+      if (pos >= this.clipEnd){ this.playhead = null; this.draw(); return; }
+      this.playhead = Math.max(c0, pos);
+      this.draw();
+      this._raf = requestAnimationFrame(tick);
+    };
+    this._raf = requestAnimationFrame(tick);
   },
   stopPreview(){
     try{ this.previewNodes.song && this.previewNodes.song.stop(); }catch(e){}
     try{ this.previewNodes.ann  && this.previewNodes.ann.stop(); }catch(e){}
     this.previewNodes = { song:null, ann:null, gSong:null, gAnn:null, startedAt:0 };
+    cancelAnimationFrame(this._raf);
+    this.playhead = null;
+    if (this.ctx && this.geom.w) this.draw();
   },
 
   /* render offline & save as WAV */
@@ -2266,6 +2346,23 @@ window.addEventListener('DOMContentLoaded', async () => {
 
   // mixer clip (v3)
   $('#btnFullSong').addEventListener('click', () => Mixer.useFullSong());
+
+  // mixer time fields (v3.1)
+  $('#tStart').addEventListener('change', (e) => {
+    const v = Mixer._parseTime(e.target.value);
+    if (v == null){ Mixer._updateClipLabel(); return; }
+    Mixer.setClip(v, Mixer.clipEnd);
+  });
+  $('#tEnd').addEventListener('change', (e) => {
+    const v = Mixer._parseTime(e.target.value);
+    if (v == null){ Mixer._updateClipLabel(); return; }
+    Mixer.setClip(Mixer.clipStart, v);
+  });
+  $('#tLen').addEventListener('change', (e) => {
+    const v = parseFloat(e.target.value);
+    if (isNaN(v)){ Mixer._updateClipLabel(); return; }
+    Mixer.setClip(Mixer.clipStart, Mixer.clipStart + v);
+  });
 
   // sounds
   $('#btnAddPad').addEventListener('click', () => App.addPad());
