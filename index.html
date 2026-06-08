@@ -447,6 +447,25 @@
   .walkup-overlay .wo-buttons { display: flex; flex-direction: column; gap: 12px; width: 100%; max-width: 340px; margin-top: 14px; }
   .walkup-overlay .wo-buttons .btn { width: 100%; min-height: 64px; font-size: 18px; }
 
+  /* v7: Between Games warmup card */
+  .bg-card{ margin-bottom: 12px; }
+  .bg-row{ display: flex; align-items: center; gap: 12px; }
+  .bg-info{ flex: 1; min-width: 0; }
+  .bg-label{ font-weight: 800; font-size: 15px; letter-spacing: .2px; }
+  .bg-sub{ font-size: 12px; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .bg-toggle{ flex: 0 0 auto; min-width: 104px; font-weight: 700; }
+  #betweenGamesCard.playing{
+    background: linear-gradient(135deg, rgba(30,215,96,.16), rgba(30,215,96,.04));
+    border-color: rgba(30,215,96,.5);
+  }
+  #betweenGamesCard.playing .bg-toggle{ background: #1ed760; color: #05210f; border-color: #1ed760; }
+  #betweenGamesCard.playing .bg-label::after{
+    content: ''; display: inline-block; width: 8px; height: 8px; margin-left: 8px;
+    border-radius: 50%; background: #1ed760; vertical-align: middle;
+    animation: bgPulse 1.4s ease-in-out infinite;
+  }
+  @keyframes bgPulse{ 0%,100%{ opacity: 1; } 50%{ opacity: .25; } }
+
   /* v6.2: offline banner */
   #offlineBanner{
     position: fixed; top: 0; left: 0; right: 0; z-index: 300;
@@ -508,6 +527,17 @@
         <button class="btn primary" id="trPlay">▶︎</button>
         <button class="btn" id="trNext">⏭</button>
         <button class="btn" id="trShuffle" title="Shuffle within section">⇋</button>
+      </div>
+    </div>
+
+    <!-- v7: Between Games — one-tap warmup station (separate playlist) -->
+    <div class="card bg-card" id="betweenGamesCard">
+      <div class="bg-row">
+        <div class="bg-info">
+          <div class="bg-label">Between Games</div>
+          <div class="bg-sub muted" id="bgSub">Warm-up music · not set up yet</div>
+        </div>
+        <button class="btn bg-toggle" id="btnBetweenGames">▶︎ Start</button>
       </div>
     </div>
 
@@ -645,6 +675,23 @@
         Redirect URI in use: <code id="redirectUri">—</code><br>
         Register this exact URI in the Spotify dev app.
       </div>
+    </div>
+
+    <!-- v7: Between Games warmup playlist setup -->
+    <div class="card" style="margin-bottom:10px">
+      <div class="h-title" style="margin-top:0">Between Games music</div>
+      <div class="muted" style="font-size:12px; margin-bottom:8px">
+        A <strong>separate</strong> playlist that plays on shuffle between games — keep it upbeat and
+        energetic. In Spotify, open your warm-up playlist → Share → <em>Copy link to playlist</em>,
+        then paste it here.
+      </div>
+      <input type="text" id="warmupUrlInput" placeholder="https://open.spotify.com/playlist/…"
+             style="width:100%; margin-bottom:8px" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <div class="row" style="gap:8px">
+        <button class="btn small primary" id="btnSaveWarmup">Save</button>
+        <button class="btn small ghost" id="btnClearWarmup">Clear</button>
+      </div>
+      <div class="muted" id="warmupStatus" style="font-size:12px; margin-top:8px">No warm-up playlist set.</div>
     </div>
 
     <div class="card" style="margin-bottom:10px">
@@ -900,7 +947,7 @@ async function dbDel(store, id){
 async function kvGet(k, dflt=null){ const v = await dbGet('kv', k); return v? v.value : dflt; }
 async function kvSet(k, v){
   await dbPutRaw('kv', { id:k, value:v });
-  if (typeof Cloud!=='undefined' && ['sections','section_assignments','shuffle','ttsAnnounce','spotify_token'].includes(k)) Cloud.schedule();
+  if (typeof Cloud!=='undefined' && ['sections','section_assignments','shuffle','ttsAnnounce','spotify_token','warmup_playlist_uri','warmup_playlist_name'].includes(k)) Cloud.schedule();
 }
 async function blobPut(id, blob){ await dbPutRaw('blobs', { id, blob }); }
 async function blobGet(id){ const r = await dbGet('blobs', id); return r? r.blob : null; }
@@ -1393,6 +1440,15 @@ const Spotify = {
     if (!this.deviceId){ toast('No Spotify device — transfer first'); return; }
     const body = { context_uri: playlistUri, offset: { position }, position_ms: 0 };
     await this.api('PUT', `/me/player/play?device_id=${this.deviceId}`, body);
+  },
+  /* v7: shuffle-play a whole playlist context (Between Games warm-up). Turn
+     shuffle on FIRST so playback starts on a random track, then start the
+     context with no offset. */
+  async playContextShuffled(contextUri){
+    if (!this.deviceId){ await this.transfer(false); }
+    if (!this.deviceId){ toast('No Spotify device — open the app and try again'); return; }
+    try{ await this.setShuffle(true); }catch(e){}
+    await this.api('PUT', `/me/player/play?device_id=${this.deviceId}`, { context_uri: contextUri });
   },
   async toggle(){
     if (!this.player) return;
@@ -2721,6 +2777,125 @@ const TodaysSet = {
   },
 };
 
+/* ============================================================================
+   BETWEEN GAMES (v7) — one-tap warm-up station
+   ============================================================================
+   A SEPARATE Spotify playlist (not the Softball game playlist) that plays on
+   shuffle during downtime between games. The user pastes a playlist link in
+   ⚙ settings; the Music-tab button toggles continuous shuffle playback. State
+   is just the saved playlist context URI + name; "playing" is inferred from
+   the SDK player state so the button reflects reality even after a reload. */
+const BetweenGames = {
+  uri: null,    // 'spotify:playlist:ID'
+  name: '',     // display name
+  active: false,
+
+  /* Accept a full open.spotify.com URL, a spotify:playlist:ID URI, or a bare
+     22-char ID. Returns a context URI or null. */
+  parse(input){
+    if (!input) return null;
+    const s = String(input).trim();
+    let m = s.match(/playlist[/:]([0-9A-Za-z]{22})/);
+    if (m) return 'spotify:playlist:' + m[1];
+    m = s.match(/^([0-9A-Za-z]{22})$/);
+    if (m) return 'spotify:playlist:' + m[1];
+    return null;
+  },
+
+  async load(){
+    this.uri  = await kvGet('warmup_playlist_uri', null);
+    this.name = await kvGet('warmup_playlist_name', '') || '';
+    this.updateUI();
+  },
+
+  async setFromInput(raw){
+    const uri = this.parse(raw);
+    if (!uri){ toast('That doesn\'t look like a Spotify playlist link'); return false; }
+    this.uri = uri;
+    // try to fetch the playlist name for nicer display (best-effort)
+    this.name = '';
+    if (Spotify.token){
+      try{
+        const id = uri.split(':').pop();
+        const j = await Spotify.api('GET', '/playlists/' + id + '?fields=name');
+        if (j && j.name) this.name = j.name;
+      }catch(e){ /* private/unavailable — keep generic name */ }
+    }
+    await kvSet('warmup_playlist_uri', this.uri);
+    await kvSet('warmup_playlist_name', this.name);
+    this.updateUI();
+    toast('Warm-up playlist saved' + (this.name ? ' · ' + this.name : ''));
+    return true;
+  },
+
+  async clear(){
+    this.uri = null; this.name = '';
+    await kvSet('warmup_playlist_uri', null);
+    await kvSet('warmup_playlist_name', '');
+    if (this.active) await this.stop();
+    this.updateUI();
+    toast('Warm-up playlist cleared');
+  },
+
+  async toggle(){
+    if (this.active){ await this.stop(); return; }
+    await this.start();
+  },
+
+  async start(){
+    if (!Spotify.token){ toast('Connect Spotify first'); return; }
+    if (!this.uri){
+      toast('Set a warm-up playlist in ⚙ settings first');
+      $('#modalAdmin').classList.add('open');
+      try{ renderSongManager(); }catch(e){}
+      return;
+    }
+    // stop any walk-up / pad / game music so warm-up owns the output
+    try{ App.stopAll && App.stopAll(); }catch(e){}
+    try{
+      await Spotify.playContextShuffled(this.uri);
+      this.active = true;
+      App.shuffle = true; // reflect in the transport shuffle button
+      const sb = $('#trShuffle'); if (sb) sb.classList.add('primary');
+      this.updateUI();
+      toast('🎶 Between-games music on');
+    }catch(e){
+      console.error(e);
+      toast('Couldn\'t start — ' + (e.message || 'playback error'));
+    }
+  },
+
+  async stop(){
+    this.active = false;
+    try{ await Spotify.pauseEverywhere(); }catch(e){}
+    this.updateUI();
+    toast('Between-games music off');
+  },
+
+  updateUI(){
+    const card = $('#betweenGamesCard');
+    const btn  = $('#btnBetweenGames');
+    const sub  = $('#bgSub');
+    const status = $('#warmupStatus');
+    const input  = $('#warmupUrlInput');
+    if (sub){
+      if (!this.uri) sub.textContent = 'Warm-up music · not set up yet';
+      else sub.textContent = this.active
+        ? 'Playing' + (this.name ? ' · ' + this.name : '')
+        : 'Ready' + (this.name ? ' · ' + this.name : ' · tap Start');
+    }
+    if (btn) btn.textContent = this.active ? '■ Stop' : '▶︎ Start';
+    if (card) card.classList.toggle('playing', this.active);
+    if (status){
+      status.innerHTML = this.uri
+        ? 'Set' + (this.name ? ': <strong>' + escapeHtml(this.name) + '</strong>' : '') +
+          ' — <code>' + escapeHtml(this.uri) + '</code>'
+        : 'No warm-up playlist set.';
+    }
+    if (input && this.uri && !input.value) input.value = 'https://open.spotify.com/playlist/' + this.uri.split(':').pop();
+  },
+};
+
 function clamp(v, lo, hi){ return Math.max(lo, Math.min(hi, v)); }
 
 function escapeHtml(s){ return String(s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c])); }
@@ -3573,6 +3748,8 @@ const Cloud = {
         games,
         audio_features: audioFeatures,
         active_game_id: await kvGet('active_game_id'),
+        warmup_playlist_uri: await kvGet('warmup_playlist_uri', null),
+        warmup_playlist_name: await kvGet('warmup_playlist_name', ''),
       };
       await this.sb.from('dugout_settings').upsert({
         user_id: this.user.id,
@@ -3636,6 +3813,12 @@ const Cloud = {
           await unionInto('audio_features', st.config.audio_features);
           if (st.config.active_game_id){
             await dbPutRaw('kv', { id:'active_game_id', value: st.config.active_game_id });
+          }
+          // v7: pull Between Games warm-up playlist if we don't have one locally
+          if (st.config.warmup_playlist_uri && !(await kvGet('warmup_playlist_uri'))){
+            await dbPutRaw('kv', { id:'warmup_playlist_uri', value: st.config.warmup_playlist_uri });
+            await dbPutRaw('kv', { id:'warmup_playlist_name', value: st.config.warmup_playlist_name || '' });
+            if (typeof BetweenGames !== 'undefined') BetweenGames.load();
           }
         }
         if (st.spotify_refresh_token && !Spotify.token){
@@ -3790,6 +3973,16 @@ window.addEventListener('DOMContentLoaded', async () => {
   });
   $('#btnTSSettings').addEventListener('click', () => TodaysSet.openSettings());
 
+  // v7: Between Games warm-up station
+  $('#btnBetweenGames').addEventListener('click', () => BetweenGames.toggle());
+  $('#btnSaveWarmup').addEventListener('click', async () => {
+    await BetweenGames.setFromInput($('#warmupUrlInput').value);
+  });
+  $('#btnClearWarmup').addEventListener('click', () => {
+    $('#warmupUrlInput').value = '';
+    BetweenGames.clear();
+  });
+
   // admin
   // PWA install hint: hidden when the app is already running standalone
   // (display-mode standalone covers Android/desktop install; navigator.standalone is the iOS Safari flag).
@@ -3901,70 +4094,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 
   // player modal
   $('#playerClose').addEventListener('click', () => $('#modalPlayer').classList.remove('open'));
-  $('#btnSavePlayer').addEventListener('click', () => App.savePlayerEdits());
-  $('#btnDeletePlayer').addEventListener('click', () => App.deletePlayer());
-  $('#btnPickWalk').addEventListener('click', async () => {
-    const f = await pickFile('audio/*'); if (!f) return;
-    const p = App.players.find(x=>x.id===App.editPlayerId);
-    if (p.walkupBlobId) await blobDel(p.walkupBlobId);
-    p.walkupBlobId = uuid();
-    await blobPut(p.walkupBlobId, f); await dbPut('players', p);
-    $('#bWalk').textContent = 'ready'; $('#bWalk').className='badge ok';
-    toast('Walk-up saved');
-  });
-  $('#btnPickAnn').addEventListener('click', async () => {
-    const f = await pickFile('audio/*'); if (!f) return;
-    const p = App.players.find(x=>x.id===App.editPlayerId);
-    if (p.annBlobId) await blobDel(p.annBlobId);
-    p.annBlobId = uuid();
-    await blobPut(p.annBlobId, f); await dbPut('players', p);
-    $('#bAnn').textContent = 'ready'; $('#bAnn').className='badge ok';
-    toast('Announcement saved');
-  });
-  /* v5: editor preview buttons go through the decoded-buffer cache too */
-  $('#btnPlayWalk').addEventListener('click', async () => {
-    const p = App.players.find(x=>x.id===App.editPlayerId);
-    if (!p?.walkupBlobId) return toast('No file');
-    const buf = await getDecodedBuffer(p.walkupBlobId);
-    if (!buf) return toast('No file');
-    const ctx = audio(); const src = ctx.createBufferSource(); src.buffer=buf;
-    src.connect(getLocalBus()); App.activeLocalNodes.add(src); src.start();
-    src.onended = ()=> App.activeLocalNodes.delete(src);
-  });
-  $('#btnPlayAnn').addEventListener('click', async () => {
-    const p = App.players.find(x=>x.id===App.editPlayerId);
-    if (!p?.annBlobId) return toast('No file');
-    const buf = await getDecodedBuffer(p.annBlobId);
-    if (!buf) return toast('No file');
-    const ctx = audio(); const src = ctx.createBufferSource(); src.buffer=buf;
-    src.connect(getLocalBus()); App.activeLocalNodes.add(src); src.start();
-    src.onended = ()=> App.activeLocalNodes.delete(src);
-  });
-  $('#btnPlayMix').addEventListener('click', async () => {
-    const p = App.players.find(x=>x.id===App.editPlayerId);
-    if (!p?.mixBlobId) return toast('No mix yet');
-    const buf = await getDecodedBuffer(p.mixBlobId);
-    if (!buf) return toast('No mix yet');
-    const ctx = audio(); const src = ctx.createBufferSource(); src.buffer=buf;
-    src.connect(getLocalBus()); App.activeLocalNodes.add(src); src.start();
-    src.onended = ()=> App.activeLocalNodes.delete(src);
-  });
-  $('#btnClearWalk').addEventListener('click', async () => {
-    const p = App.players.find(x=>x.id===App.editPlayerId);
-    if (p.walkupBlobId){ await blobDel(p.walkupBlobId); p.walkupBlobId=null; await dbPut('players',p); }
-    $('#bWalk').textContent='missing'; $('#bWalk').className='badge missing';
-  });
-  $('#btnClearAnn').addEventListener('click', async () => {
-    const p = App.players.find(x=>x.id===App.editPlayerId);
-    if (p.annBlobId){ await blobDel(p.annBlobId); p.annBlobId=null; await dbPut('players',p); }
-    $('#bAnn').textContent='missing'; $('#bAnn').className='badge missing';
-  });
-  $('#btnClearMix').addEventListener('click', async () => {
-    const p = App.players.find(x=>x.id===App.editPlayerId);
-    if (p.mixBlobId){ await blobDel(p.mixBlobId); p.mixBlobId=null; await dbPut('players',p); }
-    $('#bMix').textContent='missing'; $('#bMix').className='badge missing';
-    App.renderLineup();
-  });
+  $('#btnSavePlayer').addEventListener('click', () => App.savePlayer());
   $('#btnOpenMixer').addEventListener('click', () => Mixer.open(App.editPlayerId));
 
   // mixer modal
@@ -4028,6 +4158,9 @@ window.addEventListener('DOMContentLoaded', async () => {
     if (App.playlist) TodaysSet.ensureFeatures().catch(()=>{});
     TodaysSet._refreshPlayedSet().catch(()=>{});
   }catch(e){ console.warn('Today\'s Set restore failed', e); }
+
+  // v7: Between Games — load saved warm-up playlist
+  try{ await BetweenGames.load(); }catch(e){ console.warn('Between Games load failed', e); }
 
   /* ---- v6.2 reliability pack ----------------------------------------- */
 
