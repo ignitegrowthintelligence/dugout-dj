@@ -4014,30 +4014,55 @@ window.addEventListener('DOMContentLoaded', async () => {
       (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1); // iPadOS lies
     const isAndroid = /Android/i.test(navigator.userAgent);
     const show = (id, on) => { const n = document.getElementById(id); if (n) n.style.display = on ? '' : 'none'; };
+    const isMobile = isIos || isAndroid;
+    /* v7.4: iOS Safari NEVER fires beforeinstallprompt, so the green button
+       could only ever appear on desktop/Android Chrome — on iPhone the card
+       fell back to tiny text that's easy to miss. Now: always show a tappable
+       button on mobile (and on Android/desktop when a native prompt exists),
+       and show the matching step text. Only a desktop browser with no prompt
+       hides the button (nothing to tap — just manual steps). */
     if (_installPrompt){
+      // native install available (Android/desktop Chrome/Edge)
       show('btnInstallApp', true);
       show('installInstructions', false);
+    } else if (isMobile){
+      // iPhone (no prompt) or Android without a captured prompt — show button + steps
+      show('btnInstallApp', true);
+      show('installInstructions', true);
+      show('instrIos', isIos);
+      show('instrAndroid', isAndroid);
+      show('instrDesktop', false);
     } else {
+      // desktop without a prompt — manual steps only
       show('btnInstallApp', false);
       show('installInstructions', true);
-      show('instrIos', isIos || (!isAndroid && !isIos));
-      show('instrAndroid', isAndroid);
-      show('instrDesktop', !isIos && !isAndroid);
+      show('instrIos', false);
+      show('instrAndroid', false);
+      show('instrDesktop', true);
     }
     // fullscreen toggle: only where the API exists (Android Chrome, desktop) and we're in a tab
     show('btnFullscreen', !!document.documentElement.requestFullscreen && document.fullscreenEnabled !== false);
   }
-  // v6.4: one-tap install + fullscreen toggle
+  // v6.4 + v7.4: one-tap install (native) or guided steps (iOS) + fullscreen toggle
   $('#btnInstallApp').addEventListener('click', async () => {
-    if (!_installPrompt){ refreshInstallHint(); return; }
-    _installPrompt.prompt();
-    try{
-      const choice = await _installPrompt.userChoice;
-      if (choice && choice.outcome === 'accepted'){ /* appinstalled handler does the rest */ }
-      else toast('Install cancelled');
-    }catch(e){}
-    _installPrompt = null;
-    refreshInstallHint();
+    if (_installPrompt){
+      _installPrompt.prompt();
+      try{
+        const choice = await _installPrompt.userChoice;
+        if (!(choice && choice.outcome === 'accepted')) toast('Install cancelled');
+      }catch(e){}
+      _installPrompt = null;
+      refreshInstallHint();
+      return;
+    }
+    // No native prompt (iPhone, or Android that hasn't offered it) — guide the user.
+    const isIos = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+      (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    const inst = document.getElementById('installInstructions');
+    if (inst){ inst.style.display = ''; inst.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }
+    toast(isIos
+      ? 'In Safari: tap the Share button (□↑) at the bottom, then “Add to Home Screen”.'
+      : 'Tap your browser’s ⋮ menu, then “Add to Home screen”.', 5500);
   });
   $('#btnFullscreen').addEventListener('click', async () => {
     try{
