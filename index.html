@@ -296,18 +296,21 @@
   .lineup-list { display:flex; flex-direction: column; gap: 10px; }
   .player {
     background: var(--surface); border:1px solid var(--line); border-radius: var(--r-md);
-    padding: 12px; display:grid; grid-template-columns: 56px 1fr auto; gap: 12px; align-items: center;
+    padding: 7px 12px; display:grid; grid-template-columns: 44px 1fr auto; gap: 10px; align-items: center;
     position: relative;
   }
   .player.active { box-shadow: 0 0 0 2px var(--accent); }
   .jersey {
-    width: 56px; height: 56px; border-radius: 14px;
+    width: 44px; height: 44px; border-radius: 11px;
     background: linear-gradient(135deg,#2ee066,#0a7a35); color: #0b1410;
-    display:flex; align-items:center; justify-content: center; font-weight: 800; font-size: 20px;
+    display:flex; align-items:center; justify-content: center; font-weight: 800; font-size: 17px;
   }
-  .player .name { font-weight: 700; font-size: 16px; }
-  .player .meta { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
-  .player .actions { display:flex; flex-direction:column; gap:6px; align-items:flex-end; }
+  .player .name { font-weight: 700; font-size: 15px; line-height: 1.15; }
+  .player .meta { font-size: 10px; color: var(--text-dim); margin-top: 1px; }
+  /* v7.3: actions side-by-side (was stacked → cards twice as tall); Play enlarged */
+  .player .actions { display:flex; flex-direction:row; gap:8px; align-items:center; }
+  .player .play-btn { min-height: 44px; padding: 8px 20px; font-size: 15px; font-weight: 800; border-radius: 12px; }
+  .player .edit-btn { min-height: 36px; padding: 6px 12px; font-size: 13px; }
   .badge {
     font-size: 10px; padding: 2px 6px; border-radius: 999px;
     background: var(--bg-3); color: var(--text-dim); border:1px solid var(--line);
@@ -1998,7 +2001,7 @@ const App = {
       const div = document.createElement('div');
       div.className = 'player' + (idx===this.activePlayerIdx ? ' active' : '');
       div.dataset.id = p.id;
-      div.style.gridTemplateColumns = '26px 56px 1fr auto';
+      div.style.gridTemplateColumns = '24px 44px 1fr auto';
       const bMix  = p.mixBlobId ? '<span class="badge ok">mix</span>' : '';
       const bWalk = p.walkupBlobId ? '<span class="badge ok">walk</span>' : '<span class="badge missing">walk</span>';
       const bAnn  = p.annBlobId ? '<span class="badge ok">ann</span>' : '<span class="badge warn">ann?</span>';
@@ -2010,8 +2013,8 @@ const App = {
           <div class="meta">${bWalk} ${bAnn} ${bMix}</div>
         </div>
         <div class="actions">
-          <button class="btn small primary" data-play>▶︎ Play</button>
-          <button class="btn small ghost" data-edit>Edit</button>
+          <button class="btn primary play-btn" data-play>▶︎ Play</button>
+          <button class="btn ghost edit-btn" data-edit>Edit</button>
         </div>
       `;
       div.querySelector('[data-play]').addEventListener('click', () => this.playPlayer(idx));
