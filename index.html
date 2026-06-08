@@ -1202,7 +1202,9 @@ const SPOTIFY_CLIENT_ID = '3b06bc3ecdc44678aec5ef75ba575bb2';
 const SPOTIFY_SCOPES = [
   'streaming','user-read-email','user-read-private',
   'user-modify-playback-state','user-read-playback-state',
-  'playlist-read-private'
+  'playlist-read-private',
+  // v7.1: needed to build the Between Games warm-up playlist in the user's account
+  'playlist-modify-public','playlist-modify-private'
 ].join(' ');
 const REDIRECT_URI = (function(){
   // Use origin + pathname so it matches whatever URL this is hosted at.
