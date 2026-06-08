@@ -631,7 +631,8 @@
       <!-- v6.4: one-tap install via captured beforeinstallprompt (Chrome/Edge/Android) -->
       <button class="btn primary" id="btnInstallApp" style="display:none; width:100%; margin-bottom:8px">📲 Add to Home Screen</button>
       <div id="installInstructions" style="font-size:13px; line-height:1.5">
-        <div id="instrIos"><strong>iPhone / iPad (Safari):</strong> Tap the Share button <span style="opacity:.8">⎙</span> → <em>Add to Home Screen</em>.</div>
+        <div id="instrIosChrome"><strong>iPhone — Chrome:</strong> Tap the <strong>⋯ More</strong> menu (bottom-right), then <em>Share…</em> → <em>Add to Home Screen</em> → <em>Add</em>.<br><span style="opacity:.7">Tip: opening this page in <strong>Safari</strong> instead gives a cleaner full-screen app.</span></div>
+        <div id="instrIos"><strong>iPhone — Safari:</strong> Tap the <strong>Share</strong> button (<span style="opacity:.8">□↑</span>) at the bottom, then <em>Add to Home Screen</em> → <em>Add</em>.</div>
         <div id="instrAndroid"><strong>Android (Chrome):</strong> Tap the ⋮ menu → <em>Add to Home screen</em> → <em>Install</em>.</div>
         <div id="instrDesktop"><strong>Computer (Chrome/Edge):</strong> Click the install icon at the right end of the address bar, or ⋮ menu → <em>Cast, save, and share</em> → <em>Install page as app</em>.</div>
       </div>
@@ -4027,15 +4028,18 @@ window.addEventListener('DOMContentLoaded', async () => {
       show('installInstructions', false);
     } else if (isMobile){
       // iPhone (no prompt) or Android without a captured prompt — show button + steps
+      const isIosChrome = isIos && /CriOS/.test(navigator.userAgent);
       show('btnInstallApp', true);
       show('installInstructions', true);
-      show('instrIos', isIos);
+      show('instrIosChrome', isIosChrome);
+      show('instrIos', isIos && !isIosChrome);
       show('instrAndroid', isAndroid);
       show('instrDesktop', false);
     } else {
       // desktop without a prompt — manual steps only
       show('btnInstallApp', false);
       show('installInstructions', true);
+      show('instrIosChrome', false);
       show('instrIos', false);
       show('instrAndroid', false);
       show('instrDesktop', true);
@@ -4058,11 +4062,14 @@ window.addEventListener('DOMContentLoaded', async () => {
     // No native prompt (iPhone, or Android that hasn't offered it) — guide the user.
     const isIos = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
       (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    const isIosChrome = isIos && /CriOS/.test(navigator.userAgent);
     const inst = document.getElementById('installInstructions');
     if (inst){ inst.style.display = ''; inst.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }
-    toast(isIos
+    toast(isIosChrome
+      ? 'In Chrome: tap the ⋯ menu (bottom-right) → Share… → “Add to Home Screen”. (Safari gives the cleanest full-screen app.)'
+      : isIos
       ? 'In Safari: tap the Share button (□↑) at the bottom, then “Add to Home Screen”.'
-      : 'Tap your browser’s ⋮ menu, then “Add to Home screen”.', 5500);
+      : 'Tap your browser’s ⋮ menu, then “Add to Home screen”.', 6500);
   });
   $('#btnFullscreen').addEventListener('click', async () => {
     try{
