@@ -1443,14 +1443,25 @@ const Spotify = {
     const body = { context_uri: playlistUri, offset: { position }, position_ms: 0 };
     await this.api('PUT', `/me/player/play?device_id=${this.deviceId}`, body);
   },
-  /* v7: shuffle-play a whole playlist context (Between Games warm-up). Turn
-     shuffle on FIRST so playback starts on a random track, then start the
-     context with no offset. */
+  /* v7.2: shuffle-play a whole playlist context (Between Games warm-up).
+     Spotify ignores a shuffle request when there's no active playback context,
+     so setting shuffle BEFORE play silently no-ops and the playlist starts at
+     track 0 in order (4 Dua Lipa songs in a row). Fix: start playback at a
+     RANDOM offset first — guarantees a different starting point every time even
+     if shuffle is flaky — THEN enable shuffle once the context is live. The
+     offset is bounded small so it stays valid for short warm-up playlists too;
+     if it's still out of range we retry from the top. */
   async playContextShuffled(contextUri){
     if (!this.deviceId){ await this.transfer(false); }
     if (!this.deviceId){ toast('No Spotify device — open the app and try again'); return; }
+    const offset = Math.floor(Math.random()*40);
+    try{
+      await this.api('PUT', `/me/player/play?device_id=${this.deviceId}`, { context_uri: contextUri, offset:{ position: offset } });
+    }catch(e){
+      await this.api('PUT', `/me/player/play?device_id=${this.deviceId}`, { context_uri: contextUri });
+    }
+    await sleep(450);
     try{ await this.setShuffle(true); }catch(e){}
-    await this.api('PUT', `/me/player/play?device_id=${this.deviceId}`, { context_uri: contextUri });
   },
   async toggle(){
     if (!this.player) return;
