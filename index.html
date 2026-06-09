@@ -34,8 +34,9 @@
     --line: #2a323d;
     --text: #f1f4f8;
     --text-dim: #9aa4b2;
-    --accent: #1db954;        /* spotify green */
+    --accent: #1db954;        /* spotify green (overridden per-team by logo color) */
     --accent-2: #2ee066;
+    --accent-dark: #0a7a35;
     --warn: #e7a93b;
     --danger: #e0524d;
     --pill: #3a4452;
@@ -68,7 +69,7 @@
   header .brand { display:flex; align-items:center; gap:10px; }
   header .brand .logo {
     width: 34px; height:34px; border-radius: 10px;
-    background: radial-gradient(circle at 30% 30%, #2ee066, #0d6c33 70%);
+    background: radial-gradient(circle at 30% 30%, var(--accent-2), var(--accent-dark) 70%);
     background-size: cover; background-position: center;
     box-shadow: 0 4px 14px rgba(46,224,102,.35);
     flex: 0 0 auto;
@@ -302,7 +303,7 @@
   .player.active { box-shadow: 0 0 0 2px var(--accent); }
   .jersey {
     width: 44px; height: 44px; border-radius: 11px;
-    background: linear-gradient(135deg,#2ee066,#0a7a35); color: #0b1410;
+    background: linear-gradient(135deg, var(--accent-2), var(--accent-dark)); color: #0b1410;
     display:flex; align-items:center; justify-content: center; font-weight: 800; font-size: 17px;
   }
   .player .name { font-weight: 700; font-size: 15px; line-height: 1.15; }
@@ -336,9 +337,14 @@
     background: var(--surface);
   }
   .team-row.cur { box-shadow: 0 0 0 2px var(--accent); }
+  /* v7.7: team color swatch */
+  .team-accent { flex:0 0 auto; width:30px; height:30px; border-radius:8px; overflow:hidden;
+    border:1px solid var(--line); cursor:pointer; padding:0; display:inline-block; position:relative; }
+  .team-accent input[type=color]{ position:absolute; top:-6px; left:-6px; width:46px; height:46px;
+    border:none; padding:0; background:none; cursor:pointer; }
   .team-row .tlogo {
     width:42px; height:42px; border-radius:10px; flex:0 0 auto;
-    background: linear-gradient(135deg,#2ee066,#0d6c33);
+    background: linear-gradient(135deg, var(--accent-2), var(--accent-dark));
     background-size: cover; background-position: center;
   }
   .team-row .tname { flex:1; font-weight:700; min-width:0; }
@@ -804,7 +810,10 @@
     </div>
 
     <div class="mixer-toolbar">
-      <button class="btn small" id="btnAutoMix">&#10024; Auto-mix</button>
+      <div class="row" style="gap:8px">
+        <button class="btn small" id="btnAutoMix">&#10024; Auto-mix</button>
+        <button class="btn small" id="btnVoFade" title="Music at 20% under the announcement, then up to 100% right after">🎙 Fade in after VO</button>
+      </div>
       <div class="row" style="gap:8px; justify-content:flex-end">
         <button class="btn small" id="btnPreviewMix">▶︎ Preview</button>
         <button class="btn small ghost" id="btnStopPreviewMix">■ Stop</button>
@@ -1740,9 +1749,11 @@ const App = {
       const row = document.createElement('div');
       row.className = 'team-row' + (t.id===this.activeTeamId ? ' cur' : '');
       const count = this.players.filter(p=>p.teamId===t.id).length;
+      const curAccent = ((this.teamExtra && this.teamExtra[t.id]) || {}).accent || '#1db954';
       row.innerHTML = `
         <div class="tlogo"></div>
         <div class="tname">${escapeHtml(t.name)}<div class="tmeta">${count} player${count===1?'':'s'}</div></div>
+        <label class="team-accent" data-accent title="Team color"><input type="color" value="${curAccent}"></label>
         <button class="btn small ghost" data-logo title="Team logo">🖼</button>
         <button class="btn small ghost" data-rename title="Rename">✎</button>
         <button class="btn small ghost" data-del title="Delete">✕</button>
@@ -1752,8 +1763,13 @@ const App = {
         if (b) row.querySelector('.tlogo').style.backgroundImage = `url(${URL.createObjectURL(b)})`;
       }
       row.addEventListener('click', (e) => {
-        if (e.target.closest('[data-logo],[data-rename],[data-del]')) return;
+        if (e.target.closest('[data-logo],[data-rename],[data-del],[data-accent]')) return;
         this.switchTeam(t.id);
+      });
+      // v7.7: manual color override
+      row.querySelector('[data-accent] input').addEventListener('input', async (e) => {
+        e.stopPropagation();
+        await Theme.setTeamAccent(t.id, e.target.value);
       });
       row.querySelector('[data-logo]').addEventListener('click', async (e) => {
         e.stopPropagation();
@@ -1762,8 +1778,11 @@ const App = {
         t.logoBlobId = uuid(); t.auto = false; // v7.6: customized = intentional
         await blobPut(t.logoBlobId, f);
         await dbPut('teams', t);
+        // v7.7: pull the team color out of the logo and theme the app
+        const accent = await Theme.extractFromBlob(f);
+        if (accent){ await Theme.setTeamAccent(t.id, accent); }
         await this.renderTeams(); await this.renderHeaderTeam();
-        toast('Logo updated');
+        toast(accent ? 'Logo updated · colors applied' : 'Logo updated');
       });
       row.querySelector('[data-rename]').addEventListener('click', async (e) => {
         e.stopPropagation();
@@ -1795,6 +1814,7 @@ const App = {
     this.activeTeamId = id;
     await kvSet('activeTeam', id);
     this.activePlayerIdx = 0;
+    if (typeof Theme !== 'undefined') Theme.applyForActiveTeam(); // v7.7: re-theme to this team
     await this.renderHeaderTeam();
     this.renderLineup();
     await this.renderTeams();
@@ -2935,6 +2955,106 @@ const BetweenGames = {
   },
 };
 
+/* ============================================================================
+   THEME (v7.7) — derive the app's accent color from the team logo
+   ============================================================================
+   Accents-only: --accent / --accent-2 / --accent-dark drive buttons, the
+   active-batter ring, jersey badges and the header logo. Backgrounds stay dark.
+   Each team's color lives in App.teamExtra[teamId].accent (a hex string) so it
+   syncs cross-device through the existing team_extra config blob, and can be
+   hand-overridden with a color picker in team settings. */
+const Theme = {
+  DEFAULT: '#1db954',
+  _hexToRgb(h){
+    h = (h||'').replace('#',''); if (h.length===3) h = h.split('').map(c=>c+c).join('');
+    const n = parseInt(h,16); return { r:(n>>16)&255, g:(n>>8)&255, b:n&255 };
+  },
+  _rgbToHex(r,g,b){ return '#'+[r,g,b].map(x=>Math.max(0,Math.min(255,Math.round(x))).toString(16).padStart(2,'0')).join(''); },
+  _rgbToHsl(r,g,b){
+    r/=255; g/=255; b/=255;
+    const mx=Math.max(r,g,b), mn=Math.min(r,g,b); let h=0,s=0; const l=(mx+mn)/2;
+    if (mx!==mn){ const d=mx-mn; s = l>0.5 ? d/(2-mx-mn) : d/(mx+mn);
+      if (mx===r) h=(g-b)/d+(g<b?6:0); else if (mx===g) h=(b-r)/d+2; else h=(r-g)/d+4; h/=6; }
+    return { h:h*360, s, l };
+  },
+  _hslToRgb(h,s,l){
+    h/=360; const f=(p,q,t)=>{ if(t<0)t+=1; if(t>1)t-=1; if(t<1/6)return p+(q-p)*6*t; if(t<1/2)return q; if(t<2/3)return p+(q-p)*(2/3-t)*6; return p; };
+    let r,g,b; if(s===0){ r=g=b=l; } else { const q=l<0.5?l*(1+s):l+s-l*s, p=2*l-q; r=f(p,q,h+1/3); g=f(p,q,h); b=f(p,q,h-1/3); }
+    return { r:r*255, g:g*255, b:b*255 };
+  },
+  /* Normalize any color into a vivid, readable accent (dark text sits on it),
+     then derive the brighter (-2) and darker (-dark) gradient stops. */
+  _ramp(hex){
+    let { r,g,b } = this._hexToRgb(hex);
+    let { h,s,l } = this._rgbToHsl(r,g,b);
+    s = Math.max(s, 0.55);                 // ensure it reads as a color
+    const lMain = Math.min(Math.max(l, 0.42), 0.6);   // mid lightness for buttons
+    const main = this._hslToRgb(h, s, lMain);
+    const bright = this._hslToRgb(h, Math.min(1, s+0.05), Math.min(0.72, lMain+0.12));
+    const dark = this._hslToRgb(h, s, Math.max(0.2, lMain-0.22));
+    return {
+      accent: this._rgbToHex(main.r,main.g,main.b),
+      accent2: this._rgbToHex(bright.r,bright.g,bright.b),
+      accentDark: this._rgbToHex(dark.r,dark.g,dark.b),
+    };
+  },
+  apply(hex){
+    const root = document.documentElement;
+    if (!hex){
+      root.style.removeProperty('--accent');
+      root.style.removeProperty('--accent-2');
+      root.style.removeProperty('--accent-dark');
+      return;
+    }
+    const r = this._ramp(hex);
+    root.style.setProperty('--accent', r.accent);
+    root.style.setProperty('--accent-2', r.accent2);
+    root.style.setProperty('--accent-dark', r.accentDark);
+  },
+  /* Re-apply for the active team (called on load, team switch, logo upload). */
+  applyForActiveTeam(){
+    const ex = (App.teamExtra && App.teamExtra[App.activeTeamId]) || {};
+    this.apply(ex.accent || null);
+  },
+  async setTeamAccent(teamId, hex){
+    if (!teamId) return;
+    if (!App.teamExtra) App.teamExtra = {};
+    App.teamExtra[teamId] = Object.assign({}, App.teamExtra[teamId] || {}, { accent: hex || null });
+    await kvSet('team_extra', App.teamExtra);
+    if (typeof Cloud!=='undefined' && Cloud.schedule) Cloud.schedule();
+    if (teamId === App.activeTeamId) this.applyForActiveTeam();
+  },
+  /* Pull the dominant vivid color out of a logo image blob. Buckets pixels by
+     hue, weights by saturation, ignores near-white/black/gray, returns hex. */
+  async extractFromBlob(blob){
+    try{
+      const url = URL.createObjectURL(blob);
+      const img = await new Promise((res,rej)=>{ const im=new Image(); im.onload=()=>res(im); im.onerror=rej; im.src=url; });
+      const S = 48, cv = document.createElement('canvas'); cv.width=S; cv.height=S;
+      const cx = cv.getContext('2d', { willReadFrequently:true });
+      cx.drawImage(img, 0, 0, S, S);
+      const d = cx.getImageData(0,0,S,S).data;
+      URL.revokeObjectURL(url);
+      const buckets = {};
+      for (let i=0;i<d.length;i+=4){
+        const r=d[i],g=d[i+1],b=d[i+2],a=d[i+3];
+        if (a < 128) continue;
+        const { h,s,l } = this._rgbToHsl(r,g,b);
+        if (s < 0.30) continue;            // skip grays/near-white/near-black
+        if (l < 0.16 || l > 0.88) continue;
+        const key = Math.round(h/12)*12;   // 12° hue buckets
+        const w = s * (1 - Math.abs(l-0.5));
+        const bk = buckets[key] || (buckets[key]={ n:0,r:0,g:0,b:0 });
+        bk.n += w; bk.r += r*w; bk.g += g*w; bk.b += b*w;
+      }
+      let best=null,bn=0;
+      for (const k in buckets){ if (buckets[k].n>bn){ bn=buckets[k].n; best=buckets[k]; } }
+      if (!best) return null;
+      return this._rgbToHex(best.r/best.n, best.g/best.n, best.b/best.n);
+    }catch(e){ console.warn('logo color extract failed', e); return null; }
+  },
+};
+
 function clamp(v, lo, hi){ return Math.max(lo, Math.min(hi, v)); }
 
 function escapeHtml(s){ return String(s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c])); }
@@ -3185,6 +3305,30 @@ const Mixer = {
     this._renderStatic();
     this.draw();
     toast('✨ Auto-mix ready — drop will hit on the announcer\'s last word');
+  },
+  /* v7.7: "Fade in after VO" — music holds at 20% UNDER the announcement, then
+     swells to 100% over 0.5s the instant the voice-over ends. Implemented as an
+     explicit envelope so it previews/saves exactly. */
+  fadeInAfterVO(){
+    if (!this.song){ toast('No song'); return; }
+    const c0 = this.clipStart, c1 = this.clipEnd;
+    const Tann = this.ann ? this.ann.duration : 0;
+    const FLOOR = 0.20, SWELL = 0.5;
+    // voice-over ends at annStart + its duration (song-time); clamp into the clip
+    const voEnd = Math.min(c1, Math.max(c0, this.annStart) + Tann);
+    const swellEnd = Math.min(c1, voEnd + SWELL);
+    const pts = [{ t: c0, v: FLOOR }];
+    if (voEnd > c0) pts.push({ t: voEnd, v: FLOOR });
+    if (swellEnd > voEnd) pts.push({ t: swellEnd, v: 1 });
+    pts.push({ t: c1, v: 1 });
+    // de-dupe strictly-increasing times
+    this.manualPoints = pts.filter((p, i, a) => i === 0 || p.t > a[i-1].t);
+    this.envCustom = true;
+    this._renderStatic();
+    this.draw();
+    toast(Tann
+      ? '🎙 Music holds at 20% under the announcement, then jumps to 100%'
+      : '🎙 No announcement set — music swells 20% → 100% at the start');
   },
   _autoEnvelopePoints(){
     // v5: NEW smart default - instead of ducking the song during the
@@ -3933,6 +4077,8 @@ const Cloud = {
 
     await App.ensureTeam();
     await App.pruneAutoTeams(); // v7.6: drop phantom empty "My Team" if a real team synced in
+    App.teamExtra = (await kvGet('team_extra')) || App.teamExtra || {};
+    if (typeof Theme !== 'undefined') Theme.applyForActiveTeam(); // v7.7: re-theme after cloud pull
     await App.renderHeaderTeam();
     App.renderLineup();
     App.renderPads();
@@ -4173,6 +4319,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   // mixer modal
   $('#mixerClose').addEventListener('click', () => Mixer.close());
   $('#btnAutoMix').addEventListener('click', () => Mixer.autoMix());
+  $('#btnVoFade').addEventListener('click', () => Mixer.fadeInAfterVO());
   // v5: new slider wiring - single fade-in length + announcement volume
   $('#sFadeIn').addEventListener('input', e => {
     Mixer.fadeInSec = parseFloat(e.target.value);
@@ -4212,6 +4359,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 
   // v3: guarantee a team exists, adopt orphan players, show team in header
   await App.ensureTeam();
+  Theme.applyForActiveTeam(); // v7.7: theme to the active team's logo color
   await App.renderHeaderTeam();
   App.renderLineup();
 
