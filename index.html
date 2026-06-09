@@ -350,49 +350,6 @@
   .team-row .tname { flex:1; font-weight:700; min-width:0; }
   .team-row .tmeta { font-size:11px; color: var(--text-dim); }
 
-  /* v8: shared team chip + member-side banner + members panel */
-  .team-row .shared-chip{
-    display:inline-block; margin-left:8px; padding:2px 6px;
-    background:#1f3a52; color:#9cc7f0; border:1px solid #2f4f6c;
-    border-radius:999px; font-size:10px; font-weight:700; letter-spacing:.3px;
-    text-transform:uppercase; vertical-align:middle;
-  }
-  .members-panel{
-    margin-top:8px; padding:10px 12px; border:1px dashed var(--line);
-    border-radius:12px; background:rgba(255,255,255,.02);
-  }
-  .members-panel .h{ font-size:12px; font-weight:700; color:var(--text-dim);
-    text-transform:uppercase; letter-spacing:.5px; margin-bottom:8px; }
-  .member-row{
-    display:flex; align-items:center; gap:8px; padding:6px 0;
-    border-bottom:1px dotted var(--line); font-size:13px;
-  }
-  .member-row:last-child{ border-bottom:0; }
-  .member-row .e{ flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .member-row .r{ font-size:10px; padding:2px 6px; border-radius:999px;
-    background:var(--bg-3); color:var(--text-dim); border:1px solid var(--line); }
-  .member-row .r.owner{ background:#14361f; color:#6cf09b; border-color:#1f5a35; }
-  .share-row{ display:flex; gap:6px; margin-top:8px; }
-  .share-row input{
-    flex:1; min-width:0; padding:8px 10px; border-radius:10px;
-    background:var(--bg-3); border:1px solid var(--line); color:var(--text);
-  }
-  .shared-banner{
-    margin: 0 0 10px; padding: 8px 12px;
-    background: linear-gradient(90deg, rgba(156,199,240,.10), rgba(156,199,240,.04));
-    border: 1px solid rgba(156,199,240,.35); border-radius: 12px;
-    font-size: 12px; color: #d6e7f7;
-  }
-  .shared-banner b{ color:#fff; }
-  .syncing-chip{
-    display:inline-block; margin-left:8px; font-size:11px; color:var(--text-dim);
-    opacity:0; transition: opacity .15s ease;
-  }
-  .syncing-chip.show{ opacity:1; }
-  /* hide edit affordances for read-only (member) view */
-  .ro [data-owner-only]{ display:none !important; }
-  .ro .pad .pad-edit{ display:none; }
-
   /* ---- master bar ---- */
   .master {
     position: fixed; left: 0; right: 0; bottom: 0; z-index: 40;
@@ -459,51 +416,6 @@
   .mixer-toolbar { display:grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
   .mixer-sliders { display:grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
   .mixer-sliders label.field { margin: 0; }
-  .mixer-adv {
-    margin-top: 12px;
-    padding: 12px;
-    background: var(--bg-3);
-    border: 1px solid var(--line);
-    border-radius: 12px;
-    padding-bottom: calc(12px + env(safe-area-inset-bottom));
-  }
-  .mixer-adv-head {
-    font-size: 12px; font-weight: 700; color: var(--text-dim);
-    letter-spacing: .3px; margin-bottom: 8px;
-  }
-  .adv-row {
-    display: grid;
-    grid-template-columns: 1fr auto auto auto;
-    align-items: center;
-    gap: 8px;
-    padding: 4px 0;
-  }
-  .adv-row + .adv-row { border-top: 1px solid var(--line); margin-top: 4px; padding-top: 8px; }
-  .adv-label {
-    font-size: 13px; color: var(--text);
-  }
-  .adv-arrow {
-    min-height: 38px; min-width: 44px;
-    background: var(--bg-3); border: 1px solid var(--line); color: var(--text);
-    border-radius: 10px; font-size: 18px; font-weight: 700;
-    display: inline-flex; align-items: center; justify-content: center;
-    cursor: pointer; padding: 0; user-select: none; -webkit-user-select: none;
-    touch-action: manipulation;
-  }
-  .adv-arrow:active { transform: scale(.96); background: var(--bg-2); }
-  .adv-arrow:disabled { opacity: .35; cursor: not-allowed; }
-  .adv-value {
-    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    font-size: 14px; color: var(--accent-2);
-    min-width: 64px; text-align: center;
-    padding: 0 4px;
-  }
-  .btn.unsaved {
-    box-shadow: 0 0 0 2px var(--warn, #f0b328);
-  }
-  .btn.unsaved::after {
-    content: " *"; opacity: .9;
-  }
   .mode-toggle {
     display:flex; gap: 6px; background: var(--bg-3); padding: 4px; border-radius: 999px;
     border:1px solid var(--line); align-self: start;
@@ -652,6 +564,9 @@
       <div class="ts-empty muted" id="todaysSetEmpty">Tap “+ Generate” to spin up a fresh 7-song arc.</div>
     </div>
 
+    <!-- v8: Post-game recap -->
+    <button class="btn block" id="btnPostGame" style="margin-bottom:14px">🎙 Post-game recap</button>
+
     <div class="h-title">Sections — Softball 2026</div>
     <div class="section-grid" id="sectionGrid">
       <!-- populated by JS -->
@@ -662,10 +577,9 @@
 
   <!-- ================= SOUNDS TAB ================= -->
   <section class="tab" id="tab-sounds">
-    <div id="sharedBannerSounds"></div>
     <div class="row between" style="margin-bottom: 10px;">
       <div class="h-title" style="margin:0;">Soundboard</div>
-      <button class="btn small" id="btnAddPad" data-owner-only>+ Add pad</button>
+      <button class="btn small" id="btnAddPad">+ Add pad</button>
     </div>
     <div class="pad-grid" id="padGrid"></div>
     <p class="muted" style="font-size:12px; margin-top: 14px;">
@@ -675,17 +589,16 @@
 
   <!-- ================= LINEUP TAB ================= -->
   <section class="tab" id="tab-lineup">
-    <div id="sharedBannerLineup"></div>
     <div class="row between" style="margin-bottom: 10px;">
       <div class="h-title" style="margin:0;">Batting Order</div>
       <div class="row" style="gap:6px">
         <button class="btn small" id="btnNextBatter">Next ▶︎</button>
-        <button class="btn small" id="btnAddPlayer" data-owner-only>+ Player</button>
+        <button class="btn small" id="btnAddPlayer">+ Player</button>
       </div>
     </div>
     <div class="lineup-list" id="lineupList"></div>
     <div class="row" style="margin-top: 12px; justify-content: space-between;">
-      <label class="row" style="gap:8px" data-owner-only>
+      <label class="row" style="gap:8px">
         <input type="checkbox" id="chkTTS">
         <span class="muted" style="font-size:12px">Use TTS announcement if no clip</span>
       </label>
@@ -821,12 +734,64 @@
     <div id="teamsList"></div>
     <button class="btn block" id="btnAddTeam" style="margin-top:10px">+ New team</button>
     <p class="muted" style="font-size:11px; margin-top:10px">
-      Tap a team to switch to it. Each team has its own batting order, walk-ups and soundboard pads.
-      Use ⎘ to duplicate a team; tap “Members” to share with another Google account.
+      Tap a team to switch to it. Each team has its own name, logo and batting order.
+      Soundboard pads are shared across teams.
     </p>
-    <p class="muted" id="shareDisabledHint" style="display:none; font-size:11px; margin-top:6px; color:#f0b328">
-      ⚠ Team sharing is unavailable — Supabase migration not yet applied.
-    </p>
+  </div>
+</div>
+
+<!-- ================ POST-GAME RECAP MODAL (v8) ================ -->
+<div class="modal-back" id="modalRecap">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <div class="close-row">
+      <h2>Post-game recap</h2>
+      <button class="btn small ghost" id="recapClose">Close</button>
+    </div>
+
+    <!-- STEP 1: capture -->
+    <div id="recapStep1">
+      <p class="muted" style="font-size:13px; margin:0 0 10px">
+        Open your <strong>GameChanger box score</strong> (the public page — no login needed),
+        screenshot it, and drop it here. Gemini reads the stats and writes the recap.
+      </p>
+      <input type="file" id="recapShot" accept="image/*" multiple style="display:none">
+      <button class="btn block primary" id="recapPickShot">📷 Upload box-score screenshot</button>
+      <div id="recapShotList" class="muted" style="font-size:12px; margin-top:6px"></div>
+      <details style="margin-top:12px">
+        <summary class="muted" style="font-size:12px; cursor:pointer">…or paste the box score text instead</summary>
+        <textarea id="recapText" rows="5" placeholder="Paste the box score text" style="width:100%; margin-top:8px"></textarea>
+      </details>
+      <button class="btn block primary" id="recapGenerate" style="margin-top:14px">✨ Generate recap</button>
+      <div id="recapBusy" class="muted" style="font-size:12px; margin-top:8px; display:none">Reading the box score &amp; writing the recap…</div>
+    </div>
+
+    <!-- STEP 2: brief + NotebookLM hop -->
+    <div id="recapStep2" style="display:none">
+      <div id="recapSummary" class="card" style="margin-bottom:12px"></div>
+      <div class="h-title" style="margin-top:0">Podcast brief</div>
+      <textarea id="recapBrief" rows="8" style="width:100%"></textarea>
+      <button class="btn block primary" id="recapToNotebook" style="margin-top:10px">📋 Copy brief &amp; open NotebookLM</button>
+      <p class="muted" style="font-size:12px; margin:10px 0 4px; line-height:1.5">
+        In NotebookLM: paste the brief as a source → click <strong>Audio Overview</strong> → wait ~2 min →
+        <strong>Share</strong> → copy the link → paste it below.
+      </p>
+      <input type="text" id="recapPodcastUrl" placeholder="Paste your NotebookLM share link" autocomplete="off" style="width:100%">
+      <button class="btn block primary" id="recapCreatePage" style="margin-top:10px">🎉 Create recap page</button>
+      <button class="btn block ghost" id="recapBack" style="margin-top:8px">← Back</button>
+    </div>
+
+    <!-- STEP 3: done -->
+    <div id="recapStep3" style="display:none">
+      <div class="card" style="margin-bottom:12px">
+        <div class="h-title" style="margin-top:0">✅ Recap page is live</div>
+        <div class="muted" style="font-size:12px">Send this link to the parents:</div>
+        <div id="recapFinalUrl" style="font-weight:700; word-break:break-all; margin-top:6px; color:var(--accent-2)"></div>
+      </div>
+      <button class="btn block primary" id="recapShare">📤 Share link</button>
+      <button class="btn block" id="recapCopyUrl" style="margin-top:8px">📋 Copy link</button>
+      <button class="btn block ghost" id="recapOpenPage" style="margin-top:8px">👁 Preview the page</button>
+    </div>
   </div>
 </div>
 
@@ -939,26 +904,13 @@
       <div id="dropWarn" style="font-size:12px; color:#f8b34a; display:none; margin-top:6px"></div>
     </details>
 
-    <div class="mixer-adv" id="mixerAdv">
-      <div class="mixer-adv-head">Advanced Adjustments</div>
-      <div class="adv-row">
-        <span class="adv-label">Music Start</span>
-        <button class="adv-arrow" type="button" id="advClipStartDown" aria-label="Decrease Music Start">&lsaquo;</button>
-        <span class="adv-value" id="advClipStartVal">0:00.0</span>
-        <button class="adv-arrow" type="button" id="advClipStartUp" aria-label="Increase Music Start">&rsaquo;</button>
-      </div>
-      <div class="adv-row">
-        <span class="adv-label">Music End</span>
-        <button class="adv-arrow" type="button" id="advClipEndDown" aria-label="Decrease Music End">&lsaquo;</button>
-        <span class="adv-value" id="advClipEndVal">0:00.0</span>
-        <button class="adv-arrow" type="button" id="advClipEndUp" aria-label="Increase Music End">&rsaquo;</button>
-      </div>
-      <div class="adv-row">
-        <span class="adv-label">Announcer Start</span>
-        <button class="adv-arrow" type="button" id="advAnnStartDown" aria-label="Decrease Announcer Start">&lsaquo;</button>
-        <span class="adv-value" id="advAnnStartVal">0:00.0</span>
-        <button class="adv-arrow" type="button" id="advAnnStartUp" aria-label="Increase Announcer Start">&rsaquo;</button>
-      </div>
+    <div class="muted" style="font-size:12px; margin-top: 10px">
+      Drag the <span style="color:#2ee066">green</span> edge handles on the song to choose the clip
+      that plays. Drag the <span style="color:#ffa833">orange</span> announcement bar to set when it
+      kicks in. Drag the <span style="color:#39c5ff">blue "Drop"</span> marker to mark the most
+      exciting moment of the song — Auto-mix lines up the drop with the end of the announcement so
+      the song hits full volume right when the announcer finishes. Tap an empty spot on the song
+      envelope to add a point, drag to move, double-tap a point to remove it.
     </div>
   </div>
 </div>
@@ -1791,55 +1743,6 @@ const App = {
     this.teamExtra = (await kvGet('team_extra')) || {};
     $('#chkTTS').checked = this.ttsAnnounce;
     $('#trShuffle').classList.toggle('primary', this.shuffle);
-
-    /* v8: migrate pre-v8 global pads to the active team. Before v8 a pad
-       lived in the soundboard regardless of team; now every pad belongs
-       to a team. Any pad lacking teamId gets attached to whichever team
-       is currently active so nothing disappears. */
-    const orphanPads = this.pads.filter(p => !p.teamId);
-    if (orphanPads.length){
-      const fallback = this.activeTeamId
-        || (this.teams[0] && this.teams[0].id)
-        || null;
-      if (fallback){
-        for (const p of orphanPads){
-          p.teamId = fallback;
-          await dbPut('pads', p);
-        }
-        toast(`Attached ${orphanPads.length} soundboard pad${orphanPads.length===1?'':'s'} to current team`, 3200);
-      }
-    }
-  },
-
-  /* v8: is the active team a team I OWN, or one shared with me?
-     A team has `ownerUserId` set if it came from the cloud; if that
-     value doesn't match the signed-in user's id, I'm a member. */
-  isShared(teamId){
-    const id = teamId || this.activeTeamId;
-    const t = this.teams.find(x => x.id === id);
-    if (!t || !t.ownerUserId) return false;
-    if (typeof Cloud === 'undefined' || !Cloud.user) return false;
-    return t.ownerUserId !== Cloud.user.id;
-  },
-  canEditActiveTeam(){ return !this.isShared(); },
-
-  /* v8: toggle global owner/member chrome based on the active team.
-     Adds .ro on body when active team is shared so CSS hides every
-     [data-owner-only] control + the per-pad edit pencils. Also injects
-     a "Shared from …" banner on the Lineup and Sounds tabs. */
-  applyOwnerChrome(){
-    const shared = this.isShared();
-    document.body.classList.toggle('ro', shared);
-    const banner = (id) => {
-      const el = document.getElementById(id);
-      if (!el) return;
-      if (!shared){ el.innerHTML = ''; return; }
-      const t = this.activeTeam();
-      const owner = (t && t.ownerEmail) || 'another account';
-      el.innerHTML = `<div class="shared-banner">🔗 <b>Shared from ${escapeHtml(owner)}</b> — view &amp; play only. You can play songs, tap soundboard pads, and generate Today's Sets, but can't edit the lineup.</div>`;
-    };
-    banner('sharedBannerLineup');
-    banner('sharedBannerSounds');
   },
 
   /* -------- TEAMS (v3) -------- */
@@ -1900,44 +1803,33 @@ const App = {
   },
   async renderTeams(){
     const wrap = $('#teamsList'); wrap.innerHTML = '';
-    const shareReady = typeof Cloud !== 'undefined' && Cloud.shareSupported;
-    $('#shareDisabledHint').style.display = (typeof Cloud !== 'undefined' && Cloud.user && !shareReady) ? '' : 'none';
     for (const t of this.teams){
       const row = document.createElement('div');
       row.className = 'team-row' + (t.id===this.activeTeamId ? ' cur' : '');
       const count = this.players.filter(p=>p.teamId===t.id).length;
-      const padCount = this.pads.filter(p=>p.teamId===t.id).length;
       const curAccent = ((this.teamExtra && this.teamExtra[t.id]) || {}).accent || '#1db954';
-      const shared = this.isShared(t.id);
-      const owned = !shared;
-      const meta = `${count} player${count===1?'':'s'} · ${padCount} pad${padCount===1?'':'s'}`;
       row.innerHTML = `
         <div class="tlogo"></div>
-        <div class="tname">${escapeHtml(t.name)}${shared ? ' <span class="shared-chip">Shared</span>' : ''}<div class="tmeta">${meta}${shared && t.ownerEmail ? ' · from ' + escapeHtml(t.ownerEmail) : ''}</div></div>
-        ${owned ? `<label class="team-accent" data-accent title="Team color"><input type="color" value="${curAccent}"></label>` : ''}
-        ${owned ? `<button class="btn small ghost" data-logo title="Team logo">🖼</button>` : ''}
-        ${owned ? `<button class="btn small ghost" data-rename title="Rename">✎</button>` : ''}
-        ${owned ? `<button class="btn small ghost" data-clone title="Duplicate team">⎘</button>` : ''}
-        ${owned ? `<button class="btn small ghost" data-members title="Owners & members">👥</button>` : ''}
-        ${owned ? `<button class="btn small ghost" data-del title="Delete">✕</button>`
-                : `<button class="btn small ghost" data-leave title="Leave shared team">↩︎ Leave</button>`}
+        <div class="tname">${escapeHtml(t.name)}<div class="tmeta">${count} player${count===1?'':'s'}</div></div>
+        <label class="team-accent" data-accent title="Team color"><input type="color" value="${curAccent}"></label>
+        <button class="btn small ghost" data-logo title="Team logo">🖼</button>
+        <button class="btn small ghost" data-rename title="Rename">✎</button>
+        <button class="btn small ghost" data-del title="Delete">✕</button>
       `;
       if (t.logoBlobId){
         const b = await blobGet(t.logoBlobId);
         if (b) row.querySelector('.tlogo').style.backgroundImage = `url(${URL.createObjectURL(b)})`;
       }
       row.addEventListener('click', (e) => {
-        if (e.target.closest('[data-logo],[data-rename],[data-del],[data-accent],[data-clone],[data-members],[data-leave],.members-panel')) return;
+        if (e.target.closest('[data-logo],[data-rename],[data-del],[data-accent]')) return;
         this.switchTeam(t.id);
       });
-      // v7.7: manual color override (owner only)
-      const accentInput = row.querySelector('[data-accent] input');
-      if (accentInput) accentInput.addEventListener('input', async (e) => {
+      // v7.7: manual color override
+      row.querySelector('[data-accent] input').addEventListener('input', async (e) => {
         e.stopPropagation();
         await Theme.setTeamAccent(t.id, e.target.value);
       });
-      const logoBtn = row.querySelector('[data-logo]');
-      if (logoBtn) logoBtn.addEventListener('click', async (e) => {
+      row.querySelector('[data-logo]').addEventListener('click', async (e) => {
         e.stopPropagation();
         const f = await pickFile('image/*'); if (!f) return;
         if (t.logoBlobId) await blobDel(t.logoBlobId);
@@ -1950,37 +1842,14 @@ const App = {
         await this.renderTeams(); await this.renderHeaderTeam();
         toast(accent ? 'Logo updated · colors applied' : 'Logo updated');
       });
-      const renameBtn = row.querySelector('[data-rename]');
-      if (renameBtn) renameBtn.addEventListener('click', async (e) => {
+      row.querySelector('[data-rename]').addEventListener('click', async (e) => {
         e.stopPropagation();
         const name = prompt('Team name:', t.name); if (!name) return;
         t.name = name; t.auto = false; // v7.6: renamed = intentional, never prune
         await dbPut('teams', t);
         await this.renderTeams(); await this.renderHeaderTeam();
       });
-      // v8: Duplicate team
-      const cloneBtn = row.querySelector('[data-clone]');
-      if (cloneBtn) cloneBtn.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        const newName = prompt('Name for the duplicated team:', (t.name || 'Team') + ' (copy)');
-        if (!newName) return;
-        const newId = await this.cloneTeam(t.id, newName);
-        if (newId){
-          await this.switchTeam(newId);
-          toast('Team duplicated — opening "' + newName + '"');
-        }
-      });
-      // v8: Members (share) panel toggle
-      const memBtn = row.querySelector('[data-members]');
-      if (memBtn) memBtn.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        if (!shareReady){
-          toast('Sharing unavailable — Supabase migration not yet applied'); return;
-        }
-        await this._toggleMembersPanel(row, t);
-      });
-      const delBtn = row.querySelector('[data-del]');
-      if (delBtn) delBtn.addEventListener('click', async (e) => {
+      row.querySelector('[data-del]').addEventListener('click', async (e) => {
         e.stopPropagation();
         if (this.teams.length<=1){ toast('You need at least one team'); return; }
         const n = this.players.filter(p=>p.teamId===t.id).length;
@@ -1990,190 +1859,14 @@ const App = {
           await dbDel('players', p.id);
         }
         this.players = this.players.filter(p=>p.teamId!==t.id);
-        // v8: drop pads attached to this team
-        for (const pad of this.pads.filter(p=>p.teamId===t.id)){
-          if (pad.blobId) await blobDel(pad.blobId);
-          await dbDel('pads', pad.id);
-        }
-        this.pads = this.pads.filter(p=>p.teamId!==t.id);
         if (t.logoBlobId) await blobDel(t.logoBlobId);
         await dbDel('teams', t.id);
         this.teams = this.teams.filter(x=>x.id!==t.id);
         if (this.activeTeamId===t.id) await this.switchTeam(this.teams[0].id);
-        else { await this.renderTeams(); this.renderPads(); }
-      });
-      // v8: Leave shared team
-      const leaveBtn = row.querySelector('[data-leave]');
-      if (leaveBtn) leaveBtn.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        if (!confirm(`Leave "${t.name}"? The owner can re-add you later.`)) return;
-        const ok = await Cloud.leaveTeam(t.id).catch(()=>false);
-        if (!ok){ toast('Leave failed — check connection'); return; }
-        // remove from local
-        for (const p of this.players.filter(p=>p.teamId===t.id)){ await dbDel('players', p.id); }
-        for (const pad of this.pads.filter(p=>p.teamId===t.id)){ await dbDel('pads', pad.id); }
-        this.players = this.players.filter(p=>p.teamId!==t.id);
-        this.pads    = this.pads.filter(p=>p.teamId!==t.id);
-        await dbDel('teams', t.id);
-        this.teams = this.teams.filter(x=>x.id!==t.id);
-        if (this.activeTeamId===t.id) await this.switchTeam((this.teams[0]||{}).id);
-        else { await this.renderTeams(); this.renderPads(); }
-        toast('You left the team');
+        else await this.renderTeams();
       });
       wrap.appendChild(row);
     }
-  },
-
-  /* v8: members panel — owner-only. Lists current members with their email
-     and a remove button; lets the owner invite by email. Hidden by default
-     until ⏵ 👥 is tapped. Requires Cloud.shareSupported (graceful otherwise). */
-  async _toggleMembersPanel(row, team){
-    const existing = row.parentElement.querySelector('.members-panel[data-for="'+team.id+'"]');
-    if (existing){ existing.remove(); return; }
-    const panel = document.createElement('div');
-    panel.className = 'members-panel';
-    panel.dataset.for = team.id;
-    panel.innerHTML = `<div class="h">Owners &amp; members for “${escapeHtml(team.name)}”</div>
-      <div class="muted" style="font-size:11px; padding:4px 0">Loading…</div>`;
-    row.insertAdjacentElement('afterend', panel);
-    const members = await Cloud.listMembers(team.id).catch(e => { console.warn(e); return null; });
-    if (!members){
-      panel.innerHTML = `<div class="h">Owners &amp; members</div>
-        <div class="muted" style="font-size:12px">Couldn't load. Sharing might not be set up yet.</div>`;
-      return;
-    }
-    const ownerEmail = (Cloud.user && Cloud.user.email) || team.ownerEmail || 'you';
-    let html = `<div class="h">Owners &amp; members for “${escapeHtml(team.name)}”</div>`;
-    html += `<div class="member-row"><span class="e">${escapeHtml(ownerEmail)}</span><span class="r owner">Owner</span></div>`;
-    for (const m of members){
-      html += `<div class="member-row" data-email="${escapeHtml(m.user_email)}">
-        <span class="e">${escapeHtml(m.user_email)}</span>
-        <span class="r">${escapeHtml(m.role||'member')}</span>
-        <button class="btn small ghost" data-remove>Remove</button>
-      </div>`;
-    }
-    html += `<div class="share-row">
-      <input type="email" placeholder="name@gmail.com" autocomplete="email" inputmode="email"
-        autocapitalize="off" spellcheck="false">
-      <button class="btn small primary" data-invite>+ Share</button>
-    </div>
-    <div class="muted" style="font-size:11px; margin-top:6px">
-      Member gets view + play access on their next sign-in. They cannot edit the lineup or pads.
-    </div>`;
-    panel.innerHTML = html;
-    // wire remove buttons
-    panel.querySelectorAll('[data-remove]').forEach(btn => {
-      btn.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        const email = btn.closest('.member-row').dataset.email;
-        if (!confirm('Remove ' + email + '?')) return;
-        const ok = await Cloud.removeMember(team.id, email).catch(()=>false);
-        if (ok){ toast('Removed ' + email); panel.remove(); this._toggleMembersPanel(row, team); }
-        else toast('Remove failed');
-      });
-    });
-    panel.querySelector('[data-invite]').addEventListener('click', async (e) => {
-      e.stopPropagation();
-      const input = panel.querySelector('input[type=email]');
-      const raw = (input.value || '').trim().toLowerCase();
-      if (!raw || raw.indexOf('@') < 0){ toast('Enter a valid email'); return; }
-      // simple guard: don't share with yourself
-      if (Cloud.user && raw === (Cloud.user.email || '').toLowerCase()){
-        toast("That's you — can't share with yourself"); return;
-      }
-      input.disabled = true;
-      const sync = document.createElement('span'); sync.className='syncing-chip show'; sync.textContent='Inviting…';
-      panel.querySelector('[data-invite]').after(sync);
-      const ok = await Cloud.addMember(team.id, raw, /*migrate*/true).catch(e => { console.warn(e); return false; });
-      sync.remove(); input.disabled = false;
-      if (!ok){ toast('Share failed — already a member or no permission'); return; }
-      toast('Shared with ' + raw);
-      input.value = '';
-      panel.remove();
-      await this._toggleMembersPanel(row, team);
-    });
-  },
-
-  /* v8: Clone Team — deep-copy lineup + soundboard + per-team settings, but
-     skip play_log/games so the clone starts with a clean rotation. Blob
-     bytes are duplicated in IndexedDB so neither team's deletes affect the
-     other. The new team enters the cloud-sync queue normally. */
-  async cloneTeam(srcId, newName){
-    const src = this.teams.find(t => t.id === srcId);
-    if (!src){ toast('Source team not found'); return null; }
-    if (!newName) newName = (src.name || 'Team') + ' (copy)';
-
-    const newTeam = {
-      id: uuid(),
-      name: newName,
-      order: this.teams.length,
-      auto: false,
-      updatedAt: Date.now(),
-    };
-
-    const dupBlob = async (blobId) => {
-      if (!blobId) return null;
-      const b = await blobGet(blobId);
-      if (!b) return null;
-      const newId = uuid();
-      await blobPut(newId, b);
-      return newId;
-    };
-
-    // logo
-    if (src.logoBlobId){
-      newTeam.logoBlobId = await dupBlob(src.logoBlobId);
-    }
-    await dbPut('teams', newTeam);
-    this.teams.push(newTeam);
-
-    // per-team extras (setSize, recencyWindow, accent)
-    const srcExtra = (this.teamExtra && this.teamExtra[srcId]) || null;
-    if (srcExtra){
-      if (!this.teamExtra) this.teamExtra = {};
-      this.teamExtra[newTeam.id] = Object.assign({}, srcExtra);
-      await kvSet('team_extra', this.teamExtra);
-    }
-
-    // players
-    const srcPlayers = this.players.filter(p => p.teamId === srcId)
-                                   .sort((a,b)=> (a.order??0)-(b.order??0));
-    for (let i = 0; i < srcPlayers.length; i++){
-      const sp = srcPlayers[i];
-      const np = {
-        id: uuid(),
-        teamId: newTeam.id,
-        name: sp.name,
-        num: sp.num,
-        order: i,
-        mixSettings: sp.mixSettings ? JSON.parse(JSON.stringify(sp.mixSettings)) : null,
-        walkupBlobId: await dupBlob(sp.walkupBlobId),
-        annBlobId:    await dupBlob(sp.annBlobId),
-        mixBlobId:    await dupBlob(sp.mixBlobId),
-      };
-      await dbPut('players', np);
-      this.players.push(np);
-    }
-
-    // pads
-    const srcPads = this.pads.filter(p => p.teamId === srcId);
-    for (const sp of srcPads){
-      const np = {
-        id: uuid(),
-        teamId: newTeam.id,
-        label: sp.label,
-        blobId: await dupBlob(sp.blobId),
-        created: Date.now(),
-      };
-      await dbPut('pads', np);
-      this.pads.push(np);
-    }
-
-    // NOTE: play_log + games are intentionally NOT cloned so the new team
-    // starts with a fresh rotation. team-scoped Spotify section assignments
-    // are global today so they automatically apply to the clone.
-
-    return newTeam.id;
   },
   async switchTeam(id){
     this.activeTeamId = id;
@@ -2181,9 +1874,7 @@ const App = {
     this.activePlayerIdx = 0;
     if (typeof Theme !== 'undefined') Theme.applyForActiveTeam(); // v7.7: re-theme to this team
     await this.renderHeaderTeam();
-    this.applyOwnerChrome();           // v8: hide/show owner-only controls
     this.renderLineup();
-    this.renderPads();                 // v8: pads are per-team now
     await this.renderTeams();
   },
   async addTeam(){
@@ -2309,21 +2000,13 @@ const App = {
   },
 
   /* -------- SOUNDS -------- */
-  teamPads(){
-    /* v8: pads are now per-team. A pre-v8 pad without teamId is treated as
-       belonging to the active team (migration already attached it on load). */
-    return this.pads.filter(p => p.teamId === this.activeTeamId);
-  },
   renderPads(){
     const grid = $('#padGrid'); grid.innerHTML = '';
-    const list = this.teamPads();
-    list.forEach(p => grid.appendChild(this.padEl(p)));
-    if (!list.length){
+    this.pads.forEach(p => grid.appendChild(this.padEl(p)));
+    // empty placeholder if none
+    if (!this.pads.length){
       const ph = document.createElement('div'); ph.className='pad empty';
-      const hint = this.isShared()
-        ? 'Owner hasn\'t added any'
-        : 'Tap + Add pad';
-      ph.innerHTML = `<div class="pad-label">No pads yet</div><div class="muted" style="font-size:11px">${hint}</div>`;
+      ph.innerHTML = `<div class="pad-label">No pads yet</div><div class="muted" style="font-size:11px">Tap + Add pad</div>`;
       grid.appendChild(ph);
     }
   },
@@ -2342,7 +2025,6 @@ const App = {
     return div;
   },
   async editPad(id){
-    if (!this.canEditActiveTeam()){ toast('Read-only — owner only'); return; }
     const p = this.pads.find(x=>x.id===id);
     if (!p) return;
     const label = prompt('Pad label:', p.label || '');
@@ -2361,17 +2043,13 @@ const App = {
     this.renderPads();
   },
   async addPad(){
-    if (!this.canEditActiveTeam()){ toast('Read-only — only the owner can add pads'); return; }
-    const teamId = this.activeTeamId;
-    if (!teamId){ toast('Pick a team first'); return; }
-    const teamCount = this.teamPads().length;
-    const label = prompt('Pad label (e.g. "Air horn"):', 'Pad ' + (teamCount+1));
+    const label = prompt('Pad label (e.g. "Air horn"):', 'Pad ' + (this.pads.length+1));
     if (!label) return;
     const f = await pickFile('audio/*');
     if (!f){ toast('No file selected'); return; }
     const blobId = uuid();
     await blobPut(blobId, f);
-    const pad = { id: uuid(), label, blobId, teamId, created: Date.now() };
+    const pad = { id: uuid(), label, blobId, created: Date.now() };
     await dbPut('pads', pad);
     this.pads.push(pad);
     this.renderPads();
@@ -2426,22 +2104,20 @@ const App = {
       div.className = 'player' + (idx===this.activePlayerIdx ? ' active' : '');
       div.dataset.id = p.id;
       div.style.gridTemplateColumns = '24px 44px 1fr auto';
-      /* v8: hide drag handle + Edit for members (CSS .ro hides data-owner-only).
-         Members can still tap Play and the row to view; just not reorder/edit. */
       div.innerHTML = `
-        <div class="drag-handle" data-drag data-owner-only title="Hold & slide to reorder">≡</div>
+        <div class="drag-handle" data-drag title="Hold & slide to reorder">≡</div>
         <div class="jersey">${escapeHtml(p.num || '#')}</div>
         <div>
           <div class="name">${escapeHtml(p.name || 'Player')}</div>
         </div>
         <div class="actions">
           <button class="btn primary play-btn" data-play>▶︎ Play</button>
-          <button class="btn ghost edit-btn" data-edit>${this.isShared() ? 'View' : 'Edit'}</button>
+          <button class="btn ghost edit-btn" data-edit>Edit</button>
         </div>
       `;
       div.querySelector('[data-play]').addEventListener('click', () => this.playPlayer(idx));
       div.querySelector('[data-edit]').addEventListener('click', () => this.openPlayerEditor(p.id));
-      if (!this.isShared()) this._bindDrag(div);
+      this._bindDrag(div);
       list.appendChild(div);
     });
   },
@@ -2500,7 +2176,6 @@ const App = {
     });
   },
   async _applyReorder(from, to){
-    if (!this.canEditActiveTeam()){ toast('Read-only — owner only'); this.renderLineup(); return; }
     const roster = this.teamPlayers();
     const activeId = (roster[this.activePlayerIdx] || {}).id;
     const moved = roster.splice(from, 1)[0];
@@ -2516,7 +2191,6 @@ const App = {
     toast('Batting order updated');
   },
   async addPlayer(){
-    if (!this.canEditActiveTeam()){ toast('Read-only — only the owner can add players'); return; }
     const p = { id: uuid(), name: 'Player', num: '00', teamId: this.activeTeamId, order: this.teamPlayers().length };
     this.players.push(p); await dbPut('players', p);
     // v7.6: a team with players is real — clear the auto flag so it's never pruned
@@ -2538,24 +2212,12 @@ const App = {
     $('#bMix').className = 'badge ' + (p.mixBlobId ? 'ok' : 'missing');
     $('#playerModalTitle').textContent = (p.name||'Player') + ' #' + (p.num||'');
     $('#modalPlayer').classList.add('open');
-    /* v8: in member view, the modal opens read-only — name/jersey become
-       disabled inputs and every Choose-file / Mix / Save / Delete control
-       is hidden by setting .ro on the modal. Previews still work. */
-    const shared = this.isShared();
-    $('#modalPlayer').classList.toggle('ro', shared);
-    $('#pName').disabled = shared;
-    $('#pNum').disabled  = shared;
-    for (const id of ['btnPickWalk','btnClearWalk','btnPickAnn','btnClearAnn','btnOpenMixer','btnClearMix','btnSavePlayer','btnDeletePlayer']){
-      const el = document.getElementById(id);
-      if (el) el.style.display = shared ? 'none' : '';
-    }
     // v5: prewarm decoded buffers so editor preview buttons play instantly
     prewarmBuffer(p.walkupBlobId);
     prewarmBuffer(p.annBlobId);
     prewarmBuffer(p.mixBlobId);
   },
   async savePlayerEdits(){
-    if (!this.canEditActiveTeam()){ toast('Read-only — owner only'); return; }
     const p = this.players.find(x=>x.id===this.editPlayerId); if (!p) return;
     p.name = $('#pName').value.trim() || 'Player';
     p.num  = $('#pNum').value.trim() || '';
@@ -2564,7 +2226,6 @@ const App = {
     $('#modalPlayer').classList.remove('open');
   },
   async deletePlayer(){
-    if (!this.canEditActiveTeam()){ toast('Read-only — owner only'); return; }
     const p = this.players.find(x=>x.id===this.editPlayerId); if (!p) return;
     if (!confirm('Delete '+(p.name||'this player')+'?')) return;
     for (const k of ['walkupBlobId','annBlobId','mixBlobId']) if (p[k]) await blobDel(p[k]);
@@ -3452,6 +3113,187 @@ const Theme = {
   },
 };
 
+/* ============================================================================
+   POST-GAME RECAP (v8) — screenshot → Gemini brief → NotebookLM → shareable page
+   ============================================================================
+   Capture the GameChanger box score (screenshot or pasted text), send it to the
+   game-recap edge function (Gemini reads it + writes a podcast brief, weaving in
+   Dugout DJ's music context), the user does the ~2-min NotebookLM Audio Overview
+   hop, pastes the podcast share link back, and we save a public recap row that
+   renders as a branded page at ?recap=<id> for sending to parents. */
+const Recap = {
+  images: [],   // [{ data, mime }]
+  result: null,
+  pageUrl: null,
+
+  open(){
+    if (!Cloud.user){ toast('Sign in (⚙ settings) first so recaps can sync'); $('#modalAdmin').classList.add('open'); return; }
+    this.images = []; this.result = null; this.pageUrl = null;
+    $('#recapText').value = ''; $('#recapPodcastUrl').value = '';
+    $('#recapShotList').textContent = '';
+    this.showStep(1);
+    $('#modalRecap').classList.add('open');
+  },
+  close(){ $('#modalRecap').classList.remove('open'); },
+  showStep(n){
+    $('#recapStep1').style.display = n===1 ? '' : 'none';
+    $('#recapStep2').style.display = n===2 ? '' : 'none';
+    $('#recapStep3').style.display = n===3 ? '' : 'none';
+  },
+
+  async addImages(fileList){
+    const files = Array.from(fileList || []);
+    for (const f of files){
+      const data = await new Promise((res)=>{ const r = new FileReader(); r.onload = ()=> res(String(r.result).split(',')[1]); r.readAsDataURL(f); });
+      this.images.push({ data, mime: f.type || 'image/png' });
+    }
+    $('#recapShotList').textContent = this.images.length
+      ? this.images.length + ' screenshot' + (this.images.length>1?'s':'') + ' ready'
+      : '';
+  },
+
+  buildMusicContext(){
+    const team = App.activeTeam();
+    const players = App.teamPlayers().map(p => (p.name||'Player') + (p.num?(' #'+p.num):'')).join(', ');
+    const ts = ((typeof TodaysSet!=='undefined' && TodaysSet.set) || []).map(s => s.name).filter(Boolean).join(', ');
+    let s = 'Team: ' + (team ? team.name : 'our team') + '.';
+    if (players) s += ' Batting order: ' + players + '.';
+    if (ts) s += ' The walk-up / between-innings music today included: ' + ts + '.';
+    s += ' If a listed player had a big game, you may note their walk-up music energized the dugout.';
+    return s;
+  },
+
+  async generate(){
+    const text = $('#recapText').value.trim();
+    if (!this.images.length && !text){ toast('Add a screenshot or paste the box score'); return; }
+    $('#recapBusy').style.display = ''; $('#recapGenerate').disabled = true;
+    try{
+      const body = { musicContext: this.buildMusicContext() };
+      if (this.images.length){ body.images = this.images; body.imageBase64 = this.images[0].data; body.imageMime = this.images[0].mime; }
+      else body.boxScoreText = text;
+      const { data, error } = await Cloud.sb.functions.invoke('game-recap', { body });
+      if (error){ let d=''; try{ d = await error.context.text(); }catch(_){} throw new Error(d || error.message); }
+      if (!data || !data.ok || !data.result){ throw new Error((data && data.error) || 'No result'); }
+      if (data.result.readOk === false){ toast('Couldn\'t read the stats — try a clearer/cropped screenshot'); return; }
+      this.result = data.result;
+      this.renderStep2();
+    }catch(e){ console.error(e); toast('Recap failed: ' + (e.message||e).slice(0,120)); }
+    finally{ $('#recapBusy').style.display = 'none'; $('#recapGenerate').disabled = false; }
+  },
+
+  renderStep2(){
+    const r = this.result;
+    const perf = (r.topPerformers||[]).map(p => `<li><strong>${escapeHtml(p.name||'')}</strong>${p.team?` <span class="muted">(${escapeHtml(p.team)})</span>`:''} — ${escapeHtml(p.line||'')}</li>`).join('');
+    $('#recapSummary').innerHTML = `
+      <div style="font-weight:800; font-size:15px">${escapeHtml(r.headline||'Game recap')}</div>
+      <div class="muted" style="font-size:12px; margin:2px 0 8px">${escapeHtml(r.date||'')} · Final ${r.awayScore}–${r.homeScore}</div>
+      ${perf ? `<ul style="margin:0; padding-left:18px; font-size:13px; line-height:1.6">${perf}</ul>` : ''}`;
+    $('#recapBrief').value = r.brief || '';
+    this.showStep(2);
+  },
+
+  async toNotebook(){
+    const brief = $('#recapBrief').value;
+    try{ await navigator.clipboard.writeText(brief); toast('Brief copied — paste it into NotebookLM'); }
+    catch(e){ toast('Copy the brief text, then open NotebookLM'); }
+    window.open('https://notebooklm.google.com/', '_blank');
+  },
+
+  async createPage(){
+    const url = $('#recapPodcastUrl').value.trim();
+    if (!url && !confirm('No NotebookLM podcast link yet — create the page without it?')) return;
+    if (this.result){ this.result.brief = $('#recapBrief').value; }
+    const team = App.activeTeam();
+    const ex = (App.teamExtra && App.teamExtra[App.activeTeamId]) || {};
+    const id = Math.random().toString(36).slice(2,10);
+    const r = this.result || {};
+    const row = {
+      id, user_id: Cloud.user.id,
+      team_name: team ? team.name : null,
+      accent: ex.accent || null,
+      headline: r.headline || null,
+      away_team: r.awayTeam || null, home_team: r.homeTeam || null,
+      away_score: (typeof r.awayScore==='number'?r.awayScore:null),
+      home_score: (typeof r.homeScore==='number'?r.homeScore:null),
+      game_date: r.date || null,
+      top_performers: r.topPerformers || [],
+      brief: r.brief || null,
+      podcast_url: url || null,
+    };
+    const { error } = await Cloud.sb.from('dugout_recaps').insert(row);
+    if (error){ toast('Save failed: ' + error.message); return; }
+    this.pageUrl = location.origin + location.pathname + '?recap=' + id;
+    $('#recapFinalUrl').textContent = this.pageUrl;
+    this.showStep(3);
+    toast('🎉 Recap page created');
+  },
+
+  async share(){
+    if (!this.pageUrl) return;
+    const title = (this.result && this.result.headline) || 'Game recap';
+    if (navigator.share){ try{ await navigator.share({ title, url: this.pageUrl }); return; }catch(e){} }
+    try{ await navigator.clipboard.writeText(this.pageUrl); toast('Link copied'); }catch(e){}
+  },
+  async copyUrl(){ if (this.pageUrl){ try{ await navigator.clipboard.writeText(this.pageUrl); toast('Link copied'); }catch(e){} } },
+  openPage(){ if (this.pageUrl) window.open(this.pageUrl, '_blank'); },
+};
+
+/* v8: standalone recap viewer — renders a branded page from a public recap row.
+   Runs INSTEAD of the app when the URL has ?recap=<id>, so parents (logged out)
+   can open the link. */
+async function renderRecapView(id){
+  const root = document.body;
+  const esc = (s)=> String(s==null?'':s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  let rec = null;
+  try{
+    const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { persistSession:false } });
+    const { data } = await sb.from('dugout_recaps').select('*').eq('id', id).maybeSingle();
+    rec = data;
+  }catch(e){ console.warn(e); }
+  if (!rec){
+    root.innerHTML = '<div style="max-width:560px;margin:60px auto;padding:24px;text-align:center;color:#9aa4b2;font-family:system-ui">Recap not found. The link may be wrong or the recap was removed.</div>';
+    return;
+  }
+  const accent = rec.accent || '#1db954';
+  const ramp = Theme._ramp(accent);
+  const perf = (rec.top_performers||[]).map(p => `<div class="rp"><div class="rpn">${esc(p.name)}</div><div class="rpl">${esc(p.line)}${p.team?` · ${esc(p.team)}`:''}</div></div>`).join('');
+  const score = (rec.away_score!=null && rec.home_score!=null) ? `${esc(rec.away_team)} ${rec.away_score} — ${rec.home_score} ${esc(rec.home_team)}` : '';
+  document.title = rec.headline || 'Game Recap';
+  root.innerHTML = `
+    <div class="rv">
+      <div class="rv-hero">
+        <div class="rv-kicker">${esc(rec.team_name||'')} · Game Recap</div>
+        <h1 class="rv-head">${esc(rec.headline||'Game Recap')}</h1>
+        ${score ? `<div class="rv-score">${score}</div>` : ''}
+        ${rec.game_date ? `<div class="rv-date">${esc(rec.game_date)}</div>` : ''}
+      </div>
+      ${rec.podcast_url ? `<a class="rv-pod" href="${esc(rec.podcast_url)}" target="_blank" rel="noopener">🎧 Listen to the game-recap podcast</a>` : ''}
+      ${perf ? `<div class="rv-sec">Top performers</div><div class="rv-perf">${perf}</div>` : ''}
+      ${rec.brief ? `<div class="rv-sec">Recap</div><div class="rv-brief">${esc(rec.brief).replace(/\n+/g,'</p><p>')}</div>` : ''}
+      <div class="rv-foot">Made with <strong>Dugout DJ</strong></div>
+    </div>
+    <style>
+      :root{ --ra:${ramp.accent}; --ra2:${ramp.accent2}; --rad:${ramp.accentDark}; }
+      body{ margin:0; background:#0b0d10; color:#f1f4f8; font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
+      .rv{ max-width:620px; margin:0 auto; padding:0 18px 48px; }
+      .rv-hero{ background:linear-gradient(135deg,var(--rad),#11151b); border-radius:0 0 22px 22px; padding:34px 22px 26px; text-align:center; }
+      .rv-kicker{ text-transform:uppercase; letter-spacing:1.5px; font-size:12px; color:var(--ra2); font-weight:700; }
+      .rv-head{ font-size:26px; line-height:1.2; margin:10px 0 14px; }
+      .rv-score{ display:inline-block; background:var(--ra); color:#0b1410; font-weight:800; padding:8px 16px; border-radius:999px; font-size:15px; }
+      .rv-date{ color:#9aa4b2; font-size:13px; margin-top:10px; }
+      .rv-pod{ display:block; text-align:center; margin:18px 0; background:var(--ra); color:#0b1410; font-weight:800; padding:16px; border-radius:14px; text-decoration:none; font-size:16px; }
+      .rv-sec{ text-transform:uppercase; letter-spacing:1px; font-size:12px; color:#9aa4b2; font-weight:700; margin:24px 0 10px; }
+      .rv-perf{ display:flex; flex-direction:column; gap:8px; }
+      .rp{ background:#1d232b; border:1px solid #2a323d; border-radius:12px; padding:12px 14px; }
+      .rpn{ font-weight:700; }
+      .rpl{ color:#9aa4b2; font-size:13px; margin-top:2px; }
+      .rv-brief{ color:#d7deea; font-size:15px; line-height:1.65; }
+      .rv-brief p{ margin:0 0 12px; }
+      .rv-foot{ text-align:center; color:#6b7480; font-size:12px; margin-top:30px; }
+      .rv-foot strong{ color:var(--ra2); }
+    </style>`;
+}
+
 function clamp(v, lo, hi){ return Math.max(lo, Math.min(hi, v)); }
 
 function escapeHtml(s){ return String(s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c])); }
@@ -3598,8 +3440,6 @@ const Mixer = {
     $('#sAvol').value = this.params.avol; $('#lblAvol').textContent = fmt(this.params.avol);
     this._updateClipLabel();
     this._updateDropWarning();
-    this._refreshAdvanced();
-    this._setDirty(false);
   },
   // v5: warn when the drop is so early there isn't room for the full fade-in
   _updateDropWarning(){
@@ -3635,8 +3475,6 @@ const Mixer = {
     if (this.annStart > hi) this.annStart = hi;
     this.manualPoints = null; this.envCustom = false;
     this.draw();
-    this._refreshAdvanced();
-    this._setDirty(true);
   },
   _parseTime(s){
     s = String(s||'').trim();
@@ -4037,72 +3875,6 @@ const Mixer = {
   },
 
   /* render offline & save as WAV */
-  /* v8.2: Advanced Adjustments — fine-tune nudges */
-  _fmtAdvTime(t){
-    if (!isFinite(t) || t < 0) t = 0;
-    const m = Math.floor(t / 60);
-    const s = t - m * 60;
-    return m + ':' + (s < 10 ? '0' : '') + s.toFixed(1);
-  },
-  _setDirty(d){
-    this._dirty = !!d;
-    const btn = document.getElementById('btnSaveMix');
-    if (btn) btn.classList.toggle('unsaved', !!d);
-  },
-  _refreshAdvanced(){
-    const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = this._fmtAdvTime(v); };
-    set('advClipStartVal', this.clipStart);
-    set('advClipEndVal', this.clipEnd);
-    set('advAnnStartVal', this.annStart);
-    const songDur = this.song ? this.song.duration : 0;
-    const annDur = this.ann ? this.ann.duration : 0;
-    const upd = (id, disabled) => { const el = document.getElementById(id); if (el) el.disabled = !!disabled; };
-    upd('advClipStartDown', !this.song || this.clipStart <= 0);
-    upd('advClipStartUp',   !this.song || this.clipStart >= this.clipEnd - 0.1);
-    upd('advClipEndDown',   !this.song || this.clipEnd <= this.clipStart + 0.1);
-    upd('advClipEndUp',     !this.song || this.clipEnd >= songDur);
-    upd('advAnnStartDown',  !this.song || this.annStart <= this.clipStart);
-    upd('advAnnStartUp',    !this.song || this.annStart >= Math.max(this.clipStart, this.clipEnd - annDur));
-  },
-  _afterAdvNudge(){
-    this._renderStatic();
-    this._updateClipLabel();
-    if (this._updateDropWarning) this._updateDropWarning();
-    this.draw();
-    this._refreshAdvanced();
-    this._setDirty(true);
-  },
-  nudgeClipStart(delta){
-    if (!this.song) return;
-    const newVal = Math.max(0, Math.min(this.clipEnd - 0.1, this.clipStart + delta));
-    if (Math.abs(newVal - this.clipStart) < 1e-9) return;
-    this.clipStart = newVal;
-    if (this.annStart < this.clipStart) this.annStart = this.clipStart;
-    const annDur = this.ann ? this.ann.duration : 0;
-    const hi = Math.max(this.clipStart, this.clipEnd - annDur);
-    if (this.annStart > hi) this.annStart = hi;
-    this._afterAdvNudge();
-  },
-  nudgeClipEnd(delta){
-    if (!this.song) return;
-    const newVal = Math.max(this.clipStart + 0.1, Math.min(this.song.duration, this.clipEnd + delta));
-    if (Math.abs(newVal - this.clipEnd) < 1e-9) return;
-    this.clipEnd = newVal;
-    const annDur = this.ann ? this.ann.duration : 0;
-    const hi = Math.max(this.clipStart, this.clipEnd - annDur);
-    if (this.annStart > hi) this.annStart = hi;
-    this._afterAdvNudge();
-  },
-  nudgeAnnStart(delta){
-    if (!this.song) return;
-    const annDur = this.ann ? this.ann.duration : 0;
-    const lo = this.clipStart;
-    const hi = Math.max(this.clipStart, this.clipEnd - annDur);
-    const newVal = Math.max(lo, Math.min(hi, this.annStart + delta));
-    if (Math.abs(newVal - this.annStart) < 1e-9) return;
-    this.annStart = newVal;
-    this._afterAdvNudge();
-  },
   async saveMix(){
     if (!this.song){ toast('No song'); return; }
     toast('Rendering mix…');
@@ -4142,7 +3914,6 @@ const Mixer = {
     await dbPut('players', p);
     App.renderLineup();
     toast('Mix saved');
-    this._setDirty(false);
     this.close();
   }
 };
@@ -4246,37 +4017,12 @@ const Cloud = {
   user: null,
   _t: null,
   busy: false,
-  /* v8: capability flags decided at runtime by probing the schema. The app
-     stays usable even if Justin hasn't run the v8 SQL — clone works locally,
-     sharing UI says "unavailable", and pad sync just skips the team_id col. */
-  shareSupported: false,    // team_members table + extended RLS present
-  padTeamColSupported: false, // dugout_pads.team_id present
-  teamExtraColSupported: false, // dugout_teams.extra + owner_email present
 
   init(){
     if (!window.supabase){ console.warn('supabase-js failed to load'); return; }
     this.sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
       auth: { detectSessionInUrl: false, flowType: 'pkce', storageKey: 'dd_sb_auth' }
     });
-  },
-
-  /* v8: probe the v8 schema. Each query is independent so partial migrations
-     still light up whatever they can. All errors are swallowed; the flag
-     stays false and the UI degrades gracefully. */
-  async probeSchema(){
-    if (!this.sb || !this.user) return;
-    try {
-      const { error } = await this.sb.from('team_members').select('team_id').limit(1);
-      this.shareSupported = !error;
-    } catch(e){ this.shareSupported = false; }
-    try {
-      const { error } = await this.sb.from('dugout_pads').select('team_id').limit(1);
-      this.padTeamColSupported = !error;
-    } catch(e){ this.padTeamColSupported = false; }
-    try {
-      const { error } = await this.sb.from('dugout_teams').select('extra,owner_email').limit(1);
-      this.teamExtraColSupported = !error;
-    } catch(e){ this.teamExtraColSupported = false; }
   },
 
   /* Handle the Google OAuth return (flag-gated so Spotify's ?code= is untouched),
@@ -4298,15 +4044,10 @@ const Cloud = {
       const had = !!this.user;
       this.user = s ? s.user : null;
       this._updateUI();
-      if (!had && this.user){
-        this.probeSchema().then(()=> this.fullSync()).catch(e=>console.warn(e));
-      }
+      if (!had && this.user) this.fullSync().catch(e=>console.warn(e));
     });
     this._updateUI();
-    if (this.user){
-      await this.probeSchema();
-      await this.fullSync().catch(e=>console.warn(e));
-    }
+    if (this.user) await this.fullSync().catch(e=>console.warn(e));
   },
 
   login(){
@@ -4377,95 +4118,26 @@ const Cloud = {
     return bid;
   },
 
-  /* v8: upload a blob under the team-scoped path (team-<teamId>/<blobId>)
-     so members can fetch it through the team-scoped storage policy.
-     Existing owner-scoped paths keep working — this only changes future
-     uploads. Each successful upload also updates cloud_paths so we don't
-     re-PUT the bytes on every sync. */
-  async _ensureUploadedTeam(blobId, teamId){
-    if (!blobId || !this.user || !teamId) return null;
-    const map = await kvGet('cloud_paths', {});
-    const want = 'team-' + teamId + '/' + blobId;
-    if (map[blobId] === want) return want;
-    // If a previous upload this session was blocked by the team-scoped
-    // storage policy (Justin hasn't applied the v8 SQL yet), don't bother
-    // hammering Supabase on every sync — just use the per-user path.
-    if (this._teamUploadBlocked) return map[blobId] || await this._ensureUploaded(blobId);
-    const blob = await blobGet(blobId);
-    if (!blob) return map[blobId] || null;
-    const { error } = await this.sb.storage.from('dugout-clips')
-      .upload(want, blob, { upsert: true, contentType: blob.type || 'auto' });
-    if (error){
-      // RLS denial → flip the per-session flag so we stop retrying. Other
-      // errors (network, etc.) we just warn about and fall back, but don't
-      // give up — they may recover.
-      if (/row-level security/i.test(error.message || '')){
-        if (!this._teamUploadBlocked){
-          this._teamUploadBlocked = true;
-          console.info('Team-scoped storage upload blocked by RLS — falling back to per-user paths. Apply the v8 Supabase migration to enable team sharing.');
-        }
-      } else {
-        console.warn('team upload failed', error);
-      }
-      return map[blobId] || await this._ensureUploaded(blobId);
-    }
-    map[blobId] = want;
-    await kvSet('cloud_paths', map);
-    return want;
-  },
-
-  /* v8: tiny "Syncing…" chip in the header for owner uploads so the user
-     gets feedback during multi-megabyte audio uploads. */
-  _setSyncing(on, label){
-    const sub = document.getElementById('connSub');
-    if (!sub) return;
-    if (on){
-      sub.dataset._wasText = sub.dataset._wasText || sub.textContent;
-      sub.textContent = label || 'Syncing…';
-    } else {
-      sub.textContent = sub.dataset._wasText || 'Game-day remote';
-      delete sub.dataset._wasText;
-    }
-  },
-
   /* ---- push local state to cloud ---- */
   async syncUp(){
     if (!this.user || this.busy) return;
     this.busy = true;
-    /* v8: only push teams I OWN. A team is "mine" if it was created locally
-       (no ownerUserId yet) or its ownerUserId matches my auth uid. Shared
-       teams are read-only — sending updates would get rejected by RLS
-       anyway, but we skip the upload churn entirely. */
-    const isMine = (t) => !t.ownerUserId || t.ownerUserId === this.user.id;
     try{
-      this._setSyncing(true);
       for (const t of App.teams){
-        if (!isMine(t)) continue;
         // v7.6: never push a phantom auto-created empty team to the cloud
         if (t.auto && !App.players.some(p => p.teamId === t.id)) continue;
-        // v8: prefer team-scoped path for the team logo
-        const logo = t.logoBlobId
-          ? await this._ensureUploadedTeam(t.logoBlobId, t.id)
-          : null;
-        const row = {
+        const logo = await this._ensureUploaded(t.logoBlobId);
+        await this.sb.from('dugout_teams').upsert({
           id: t.id, user_id: this.user.id,
           name: t.name || 'Team', logo_path: logo,
           sort: t.order ?? 0,
           updated_at: new Date(t.updatedAt || Date.now()).toISOString()
-        };
-        if (this.teamExtraColSupported){
-          row.owner_email = this.user.email || null;
-          row.extra = (App.teamExtra && App.teamExtra[t.id]) || null;
-        }
-        await this.sb.from('dugout_teams').upsert(row);
+        });
       }
       for (const p of App.players){
-        const t = App.teams.find(x => x.id === p.teamId);
-        if (t && !isMine(t)) continue; // skip players on shared teams
-        // v8: team-scoped paths so members can read these blobs
-        const walk = p.walkupBlobId && p.teamId ? await this._ensureUploadedTeam(p.walkupBlobId, p.teamId) : null;
-        const ann  = p.annBlobId    && p.teamId ? await this._ensureUploadedTeam(p.annBlobId,    p.teamId) : null;
-        const mix  = p.mixBlobId    && p.teamId ? await this._ensureUploadedTeam(p.mixBlobId,    p.teamId) : null;
+        const walk = await this._ensureUploaded(p.walkupBlobId);
+        const ann  = await this._ensureUploaded(p.annBlobId);
+        const mix  = await this._ensureUploaded(p.mixBlobId);
         await this.sb.from('dugout_players').upsert({
           id: p.id, user_id: this.user.id,
           name: p.name || 'Player', jersey: p.num || '',
@@ -4477,18 +4149,12 @@ const Cloud = {
         });
       }
       for (const pad of App.pads){
-        const t = App.teams.find(x => x.id === pad.teamId);
-        if (t && !isMine(t)) continue;
-        const clip = pad.blobId && pad.teamId
-          ? await this._ensureUploadedTeam(pad.blobId, pad.teamId)
-          : null;
-        const row = {
+        const clip = await this._ensureUploaded(pad.blobId);
+        await this.sb.from('dugout_pads').upsert({
           id: pad.id, user_id: this.user.id,
           label: pad.label || 'Pad', clip_path: clip, sort: 0,
           updated_at: new Date(pad.updatedAt || Date.now()).toISOString()
-        };
-        if (this.padTeamColSupported) row.team_id = pad.teamId || null;
-        await this.sb.from('dugout_pads').upsert(row);
+        });
       }
       // v6: scope all the new Today's Set state under settings.config so we
       // don't need new Supabase tables. play_log/games/audio_features are
@@ -4517,113 +4183,11 @@ const Cloud = {
       });
     } finally {
       this.busy = false;
-      this._setSyncing(false);
     }
   },
   async deleteRow(table, id){
     if (!this.user) return;
     try{ await this.sb.from(table).delete().eq('id', id); }catch(e){ console.warn(e); }
-  },
-
-  /* ============================================================
-     v8 — TEAM SHARING
-     ============================================================
-     Membership lives in a new `team_members(team_id,user_email,role)`
-     table. RLS:
-       - members SELECT rows where user_email = auth.email()
-       - owners SELECT all rows for their own teams
-       - owners INSERT/DELETE for their own teams
-       - members can DELETE themselves (leave)
-     plus extended SELECT policies on dugout_teams/players/pads that grant
-     members read access via team_members.
-     Storage policy grants members SELECT on team-<teamId>/* paths.
-  ============================================================ */
-  async listMembers(teamId){
-    if (!this.user || !this.shareSupported) return null;
-    const { data, error } = await this.sb.from('team_members')
-      .select('*').eq('team_id', teamId).order('added_at', { ascending: true });
-    if (error) throw error;
-    return data || [];
-  },
-  async addMember(teamId, email, migrate){
-    if (!this.user || !this.shareSupported) return false;
-    // Re-upload this team's existing blobs under team-<teamId>/<blobId> so
-    // the invitee can actually fetch them with their team-scoped policy.
-    if (migrate){
-      try { await this._migrateTeamBlobsToTeamPaths(teamId); }
-      catch(e){ console.warn('share migration warn:', e); }
-    }
-    const { error } = await this.sb.from('team_members').insert({
-      team_id: teamId,
-      user_email: String(email).trim().toLowerCase(),
-      role: 'member'
-    });
-    if (error){
-      // Likely a duplicate (already a member) or RLS rejection. Re-raise.
-      console.warn('addMember error', error);
-      return false;
-    }
-    return true;
-  },
-  async removeMember(teamId, email){
-    if (!this.user || !this.shareSupported) return false;
-    const { error } = await this.sb.from('team_members')
-      .delete()
-      .eq('team_id', teamId)
-      .eq('user_email', String(email).trim().toLowerCase());
-    if (error){ console.warn('removeMember error', error); return false; }
-    return true;
-  },
-  async leaveTeam(teamId){
-    if (!this.user || !this.shareSupported) return false;
-    const { error } = await this.sb.from('team_members')
-      .delete()
-      .eq('team_id', teamId)
-      .eq('user_email', String(this.user.email || '').toLowerCase());
-    if (error){ console.warn('leaveTeam error', error); return false; }
-    return true;
-  },
-
-  /* One-time-per-team migration: re-upload every blob belonging to this
-     team under the team-scoped storage path and rewrite the supabase
-     row(s) so subsequent fullSyncs and member downloads use the new path. */
-  async _migrateTeamBlobsToTeamPaths(teamId){
-    if (!this.user || !this.sb) return;
-    this._setSyncing(true, 'Uploading audio for share…');
-    const t = App.teams.find(x => x.id === teamId);
-    const players = App.players.filter(p => p.teamId === teamId);
-    const pads = App.pads.filter(p => p.teamId === teamId);
-    try {
-      if (t && t.logoBlobId){
-        const path = await this._ensureUploadedTeam(t.logoBlobId, teamId);
-        if (path) await this.sb.from('dugout_teams').update({ logo_path: path }).eq('id', teamId);
-      }
-      for (const p of players){
-        const patch = {};
-        if (p.walkupBlobId){
-          const path = await this._ensureUploadedTeam(p.walkupBlobId, teamId);
-          if (path) patch.walkup_path = path;
-        }
-        if (p.annBlobId){
-          const path = await this._ensureUploadedTeam(p.annBlobId, teamId);
-          if (path) patch.ann_path = path;
-        }
-        if (p.mixBlobId){
-          const path = await this._ensureUploadedTeam(p.mixBlobId, teamId);
-          if (path) patch.mixed_path = path;
-        }
-        if (Object.keys(patch).length){
-          await this.sb.from('dugout_players').update(patch).eq('id', p.id);
-        }
-      }
-      for (const pad of pads){
-        if (!pad.blobId) continue;
-        const path = await this._ensureUploadedTeam(pad.blobId, teamId);
-        if (path) await this.sb.from('dugout_pads').update({ clip_path: path }).eq('id', pad.id);
-      }
-    } finally {
-      this._setSyncing(false);
-    }
   },
   async clearSpotifyToken(){
     if (!this.user) return;
@@ -4694,57 +4258,19 @@ const Cloud = {
     }catch(e){ console.warn(e); }
 
     // TEAMS — newer-wins merge by id (v3)
-    // v8: also captures ownerUserId + ownerEmail so the UI can distinguish
-    // owned teams from teams that have been shared with the signed-in user.
-    // RLS lets a member SELECT shared teams; that's how they show up here.
     try{
       const { data: ct } = await this.sb.from('dugout_teams').select('*');
       const teamById = Object.fromEntries(App.teams.map(t=>[t.id,t]));
-      const seen = new Set();
       for (const r of (ct || [])){
-        seen.add(r.id);
         const lt = teamById[r.id];
         const cloudTime = new Date(r.updated_at).getTime();
         if (!lt || cloudTime > (lt.updatedAt || 0)){
           const nt = lt || { id: r.id };
           nt.name = r.name; nt.order = r.sort ?? 0; nt.updatedAt = cloudTime;
-          nt.ownerUserId = r.user_id || null;            // v8
-          nt.ownerEmail  = r.owner_email || nt.ownerEmail || null; // v8
           nt.logoBlobId = r.logo_path ? await this._ensureLocal(r.logo_path) : (lt ? lt.logoBlobId : null);
           await dbPutRaw('teams', nt);
-          // v8: pull per-team extras (setSize, recencyWindow, accent) from
-          // the team row so all members see the same configuration the
-          // owner has set.
-          if (r.extra && typeof r.extra === 'object'){
-            if (!App.teamExtra) App.teamExtra = {};
-            App.teamExtra[r.id] = Object.assign({}, App.teamExtra[r.id] || {}, r.extra);
-          }
-        } else {
-          // even if cloud isn't newer, refresh ownership/email so chrome stays correct
-          if (r.user_id && lt.ownerUserId !== r.user_id){
-            lt.ownerUserId = r.user_id;
-            await dbPutRaw('teams', lt);
-          }
-          if (r.owner_email && lt.ownerEmail !== r.owner_email){
-            lt.ownerEmail = r.owner_email;
-            await dbPutRaw('teams', lt);
-          }
         }
       }
-      // v8: any local team that was previously shared-with-me but is no
-      // longer returned (owner removed me, or I left) → drop it locally.
-      const local = await dbAll('teams');
-      for (const lt of local){
-        if (lt.ownerUserId && lt.ownerUserId !== this.user.id && !seen.has(lt.id)){
-          await dbDelRaw('teams', lt.id);
-          // also drop its players/pads since they're no longer reachable
-          const ps = (await dbAll('players')).filter(p => p.teamId === lt.id);
-          for (const p of ps) await dbDelRaw('players', p.id);
-          const pds = (await dbAll('pads')).filter(p => p.teamId === lt.id);
-          for (const p of pds) await dbDelRaw('pads', p.id);
-        }
-      }
-      if (App.teamExtra) await dbPutRaw('kv', { id:'team_extra', value: App.teamExtra });
       App.teams = await dbAll('teams');
       App.teams.sort((a,b)=> (a.order??0) - (b.order??0));
     }catch(e){ console.warn(e); }
@@ -4772,8 +4298,6 @@ const Cloud = {
     }catch(e){ console.warn(e); }
 
     // PADS — newer-wins merge by id
-    // v8: also pull team_id (when the column exists) so the soundboard
-    // shows the right pads for the active team.
     try{
       const { data: cpads } = await this.sb.from('dugout_pads').select('*');
       const padById = Object.fromEntries(App.pads.map(p=>[p.id,p]));
@@ -4783,7 +4307,6 @@ const Cloud = {
         if (!lp || cloudTime > (lp.updatedAt || 0)){
           const np = lp || { id: r.id };
           np.label = r.label; np.updatedAt = cloudTime;
-          if ('team_id' in r) np.teamId = r.team_id || np.teamId || null;
           np.blobId = r.clip_path ? await this._ensureLocal(r.clip_path) : (lp ? lp.blobId : null);
           await dbPutRaw('pads', np);
         }
@@ -4796,7 +4319,6 @@ const Cloud = {
     App.teamExtra = (await kvGet('team_extra')) || App.teamExtra || {};
     if (typeof Theme !== 'undefined') Theme.applyForActiveTeam(); // v7.7: re-theme after cloud pull
     await App.renderHeaderTeam();
-    App.applyOwnerChrome();   // v8: switch chrome based on active team's ownership
     App.renderLineup();
     App.renderPads();
     App.renderSections();
@@ -4820,6 +4342,11 @@ const Cloud = {
    WIRE UI
    ============================================================================ */
 window.addEventListener('DOMContentLoaded', async () => {
+  // v8: recap viewer mode — ?recap=<id> renders a standalone branded page for
+  // parents (no login, no app boot).
+  const _recapId = new URLSearchParams(location.search).get('recap');
+  if (_recapId){ try{ await renderRecapView(_recapId); }catch(e){ console.error(e); } return; }
+
   await openDB();
   await App.load();
   App.renderPads();
@@ -4877,6 +4404,19 @@ window.addEventListener('DOMContentLoaded', async () => {
     await TodaysSet.generateSet({ newGame: false, preserveLocks: true });
   });
   $('#btnTSSettings').addEventListener('click', () => TodaysSet.openSettings());
+
+  // v8: Post-game recap
+  $('#btnPostGame').addEventListener('click', () => Recap.open());
+  $('#recapClose').addEventListener('click', () => Recap.close());
+  $('#recapPickShot').addEventListener('click', () => $('#recapShot').click());
+  $('#recapShot').addEventListener('change', (e) => Recap.addImages(e.target.files));
+  $('#recapGenerate').addEventListener('click', () => Recap.generate());
+  $('#recapToNotebook').addEventListener('click', () => Recap.toNotebook());
+  $('#recapCreatePage').addEventListener('click', () => Recap.createPage());
+  $('#recapBack').addEventListener('click', () => Recap.showStep(1));
+  $('#recapShare').addEventListener('click', () => Recap.share());
+  $('#recapCopyUrl').addEventListener('click', () => Recap.copyUrl());
+  $('#recapOpenPage').addEventListener('click', () => Recap.openPage());
 
   // v7: Between Games warm-up station
   $('#btnBetweenGames').addEventListener('click', () => BetweenGames.toggle());
@@ -5030,8 +4570,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 
   // player modal
   $('#playerClose').addEventListener('click', () => $('#modalPlayer').classList.remove('open'));
-  // v8: wire to savePlayerEdits (was App.savePlayer, which didn't exist)
-  $('#btnSavePlayer').addEventListener('click', () => App.savePlayerEdits());
+  $('#btnSavePlayer').addEventListener('click', () => App.savePlayer());
   $('#btnOpenMixer').addEventListener('click', () => Mixer.open(App.editPlayerId));
 
   // mixer modal
@@ -5054,40 +4593,6 @@ window.addEventListener('DOMContentLoaded', async () => {
   $('#btnPreviewMix').addEventListener('click', () => Mixer.preview());
   $('#btnStopPreviewMix').addEventListener('click', () => Mixer.stopPreview());
   $('#btnSaveMix').addEventListener('click', () => Mixer.saveMix());
-
-  // v8.2: Advanced Adjustments — tap/hold nudges
-  (function wireAdvNudges(){
-    const STEP = 0.1;
-    const HOLD_MS = 400;
-    const REPEAT_MS = 150;
-    function bind(btnId, fn){
-      const el = document.getElementById(btnId); if (!el) return;
-      let holdTimer = null, repeatTimer = null, didRepeat = false;
-      const start = (e) => {
-        if (e && e.cancelable) e.preventDefault();
-        didRepeat = false;
-        holdTimer = setTimeout(() => {
-          didRepeat = true;
-          repeatTimer = setInterval(() => { fn(); }, REPEAT_MS);
-        }, HOLD_MS);
-      };
-      const end = () => {
-        if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
-        if (repeatTimer) { clearInterval(repeatTimer); repeatTimer = null; }
-      };
-      el.addEventListener('pointerdown', start);
-      el.addEventListener('pointerup', end);
-      el.addEventListener('pointercancel', end);
-      el.addEventListener('pointerleave', end);
-      el.addEventListener('click', () => { if (!didRepeat) fn(); didRepeat = false; });
-    }
-    bind('advClipStartDown', () => Mixer.nudgeClipStart(-STEP));
-    bind('advClipStartUp',   () => Mixer.nudgeClipStart(+STEP));
-    bind('advClipEndDown',   () => Mixer.nudgeClipEnd(-STEP));
-    bind('advClipEndUp',     () => Mixer.nudgeClipEnd(+STEP));
-    bind('advAnnStartDown',  () => Mixer.nudgeAnnStart(-STEP));
-    bind('advAnnStartUp',    () => Mixer.nudgeAnnStart(+STEP));
-  })();
 
   // master bar
   $('#masterStop').addEventListener('click', () => App.stopAll());
@@ -5112,10 +4617,8 @@ window.addEventListener('DOMContentLoaded', async () => {
   // v3: guarantee a team exists, adopt orphan players, show team in header
   await App.ensureTeam();
   Theme.applyForActiveTeam(); // v7.7: theme to the active team's logo color
-  App.applyOwnerChrome();      // v8: show/hide owner-only chrome
   await App.renderHeaderTeam();
   App.renderLineup();
-  App.renderPads();            // v8: re-render in case migration changed scoping
 
   // auto-load playlist if logged in
   if (Spotify.token){
