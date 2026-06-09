@@ -762,6 +762,14 @@
         <summary class="muted" style="font-size:12px; cursor:pointer">…or paste the box score text instead</summary>
         <textarea id="recapText" rows="5" placeholder="Paste the box score text" style="width:100%; margin-top:8px"></textarea>
       </details>
+
+      <label style="font-weight:700; font-size:13px; display:block; margin:16px 0 4px">📝 Paste the GameChanger game recap <span class="muted" style="font-weight:400">(optional)</span></label>
+      <div class="muted" style="font-size:12px; margin-bottom:6px">
+        If you're signed into GameChanger, copy their written recap and paste it here — Gemini blends its
+        storyline and color with the stats for a richer podcast.
+      </div>
+      <textarea id="recapNarrative" rows="4" placeholder="Paste GameChanger's game-recap text here…" style="width:100%"></textarea>
+
       <button class="btn block primary" id="recapGenerate" style="margin-top:14px">✨ Generate recap</button>
       <div id="recapBusy" class="muted" style="font-size:12px; margin-top:8px; display:none">Reading the box score &amp; writing the recap…</div>
     </div>
@@ -3130,6 +3138,7 @@ const Recap = {
     if (!Cloud.user){ toast('Sign in (⚙ settings) first so recaps can sync'); $('#modalAdmin').classList.add('open'); return; }
     this.images = []; this.result = null; this.pageUrl = null;
     $('#recapText').value = ''; $('#recapPodcastUrl').value = '';
+    $('#recapNarrative').value = '';
     $('#recapShotList').textContent = '';
     this.showStep(1);
     $('#modalRecap').classList.add('open');
@@ -3165,13 +3174,16 @@ const Recap = {
 
   async generate(){
     const text = $('#recapText').value.trim();
-    if (!this.images.length && !text){ toast('Add a screenshot or paste the box score'); return; }
+    const narrative0 = $('#recapNarrative').value.trim();
+    if (!this.images.length && !text && !narrative0){ toast('Add a screenshot, box score, or paste the GameChanger recap'); return; }
     const busy = $('#recapBusy');
     busy.style.display = ''; busy.textContent = 'Reading the box score & writing the recap…';
     $('#recapGenerate').disabled = true;
     const body = { musicContext: this.buildMusicContext() };
     if (this.images.length){ body.images = this.images; body.imageBase64 = this.images[0].data; body.imageMime = this.images[0].mime; }
     else body.boxScoreText = text;
+    const narrative = $('#recapNarrative').value.trim();
+    if (narrative) body.gcRecapText = narrative; // v8.2: official GC recap for storyline/color
     try{
       // Gemini occasionally returns 503 (high demand). Retry transparently so the
       // user just waits instead of re-tapping on game night.
