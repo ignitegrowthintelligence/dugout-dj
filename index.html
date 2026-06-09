@@ -1681,7 +1681,10 @@ const App = {
   /* -------- TEAMS (v3) -------- */
   async ensureTeam(){
     if (!this.teams.length){
-      const t = { id: uuid(), name: 'My Team', order: 0 };
+      // v7.6: tag the auto-created default so we can prune it later if the
+      // cloud turns out to hold the user's real team (prevents a phantom empty
+      // "My Team" appearing alongside the real one after sign-in).
+      const t = { id: uuid(), name: 'My Team', order: 0, auto: true };
       this.teams.push(t);
       await dbPut('teams', t);
     }
@@ -1692,6 +1695,26 @@ const App = {
     // adopt any players that pre-date teams
     for (const p of this.players){
       if (!p.teamId){ p.teamId = this.activeTeamId; await dbPut('players', p); }
+    }
+  },
+  /* v7.6: remove the auto-created empty "My Team" once a real team exists
+     (locally or pulled from cloud). Only prunes teams that are auto-tagged AND
+     have zero players AND aren't the only team left. Reassigns the active team
+     if the pruned one was active. */
+  async pruneAutoTeams(){
+    const hasPlayers = id => this.players.some(p => p.teamId === id);
+    const realTeams = this.teams.filter(t => !t.auto || hasPlayers(t.id));
+    if (!realTeams.length) return; // nothing real to keep — leave the default alone
+    const doomed = this.teams.filter(t => t.auto && !hasPlayers(t.id) && realTeams.length);
+    if (!doomed.length) return;
+    for (const t of doomed){
+      try{ await dbDel('teams', t.id); }catch(e){}
+      if (typeof Cloud !== 'undefined' && Cloud.user){ try{ Cloud.deleteRow('dugout_teams', t.id); }catch(e){} }
+    }
+    this.teams = this.teams.filter(t => !doomed.find(d => d.id === t.id));
+    if (!this.teams.find(t => t.id === this.activeTeamId)){
+      this.activeTeamId = (realTeams[0] || this.teams[0]).id;
+      await kvSet('activeTeam', this.activeTeamId);
     }
   },
   teamPlayers(){
@@ -1736,7 +1759,7 @@ const App = {
         e.stopPropagation();
         const f = await pickFile('image/*'); if (!f) return;
         if (t.logoBlobId) await blobDel(t.logoBlobId);
-        t.logoBlobId = uuid();
+        t.logoBlobId = uuid(); t.auto = false; // v7.6: customized = intentional
         await blobPut(t.logoBlobId, f);
         await dbPut('teams', t);
         await this.renderTeams(); await this.renderHeaderTeam();
@@ -1745,7 +1768,7 @@ const App = {
       row.querySelector('[data-rename]').addEventListener('click', async (e) => {
         e.stopPropagation();
         const name = prompt('Team name:', t.name); if (!name) return;
-        t.name = name;
+        t.name = name; t.auto = false; // v7.6: renamed = intentional, never prune
         await dbPut('teams', t);
         await this.renderTeams(); await this.renderHeaderTeam();
       });
@@ -2003,15 +2026,11 @@ const App = {
       div.className = 'player' + (idx===this.activePlayerIdx ? ' active' : '');
       div.dataset.id = p.id;
       div.style.gridTemplateColumns = '24px 44px 1fr auto';
-      const bMix  = p.mixBlobId ? '<span class="badge ok">mix</span>' : '';
-      const bWalk = p.walkupBlobId ? '<span class="badge ok">walk</span>' : '<span class="badge missing">walk</span>';
-      const bAnn  = p.annBlobId ? '<span class="badge ok">ann</span>' : '<span class="badge warn">ann?</span>';
       div.innerHTML = `
         <div class="drag-handle" data-drag title="Hold & slide to reorder">≡</div>
         <div class="jersey">${escapeHtml(p.num || '#')}</div>
         <div>
           <div class="name">${escapeHtml(p.name || 'Player')}</div>
-          <div class="meta">${bWalk} ${bAnn} ${bMix}</div>
         </div>
         <div class="actions">
           <button class="btn primary play-btn" data-play>▶︎ Play</button>
@@ -2096,6 +2115,9 @@ const App = {
   async addPlayer(){
     const p = { id: uuid(), name: 'Player', num: '00', teamId: this.activeTeamId, order: this.teamPlayers().length };
     this.players.push(p); await dbPut('players', p);
+    // v7.6: a team with players is real — clear the auto flag so it's never pruned
+    const at = this.teams.find(t => t.id === this.activeTeamId);
+    if (at && at.auto){ at.auto = false; await dbPut('teams', at); }
     this.renderLineup();
     this.openPlayerEditor(p.id);
   },
@@ -3719,6 +3741,8 @@ const Cloud = {
     this.busy = true;
     try{
       for (const t of App.teams){
+        // v7.6: never push a phantom auto-created empty team to the cloud
+        if (t.auto && !App.players.some(p => p.teamId === t.id)) continue;
         const logo = await this._ensureUploaded(t.logoBlobId);
         await this.sb.from('dugout_teams').upsert({
           id: t.id, user_id: this.user.id,
@@ -3908,6 +3932,7 @@ const Cloud = {
     }catch(e){ console.warn(e); }
 
     await App.ensureTeam();
+    await App.pruneAutoTeams(); // v7.6: drop phantom empty "My Team" if a real team synced in
     await App.renderHeaderTeam();
     App.renderLineup();
     App.renderPads();
