@@ -3153,12 +3153,42 @@ const Recap = {
   async addImages(fileList){
     const files = Array.from(fileList || []);
     for (const f of files){
-      const data = await new Promise((res)=>{ const r = new FileReader(); r.onload = ()=> res(String(r.result).split(',')[1]); r.readAsDataURL(f); });
-      this.images.push({ data, mime: f.type || 'image/png' });
+      let data, mime = 'image/jpeg';
+      try{
+        data = await this._downscale(f);           // shrink so mobile screenshots fit the request
+      }catch(e){
+        // fallback: send the raw file if canvas can't read it
+        data = await new Promise((res)=>{ const r = new FileReader(); r.onload = ()=> res(String(r.result).split(',')[1]); r.readAsDataURL(f); });
+        mime = f.type || 'image/png';
+      }
+      this.images.push({ data, mime });
     }
     $('#recapShotList').textContent = this.images.length
       ? this.images.length + ' screenshot' + (this.images.length>1?'s':'') + ' ready'
       : '';
+  },
+  /* v8.3: downscale a phone screenshot (often 2-4 MB PNG) to a ~1600px JPEG so
+     the base64 payload stays small enough for the edge function and slow cell
+     networks. Gemini reads the stats fine at this size. */
+  _downscale(file){
+    return new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => {
+        try{
+          const MAX = 1600;
+          const scale = Math.min(1, MAX / Math.max(img.width, img.height));
+          const cw = Math.max(1, Math.round(img.width * scale));
+          const ch = Math.max(1, Math.round(img.height * scale));
+          const c = document.createElement('canvas'); c.width = cw; c.height = ch;
+          c.getContext('2d').drawImage(img, 0, 0, cw, ch);
+          URL.revokeObjectURL(url);
+          resolve(c.toDataURL('image/jpeg', 0.82).split(',')[1]);
+        }catch(e){ URL.revokeObjectURL(url); reject(e); }
+      };
+      img.onerror = (e) => { URL.revokeObjectURL(url); reject(e); };
+      img.src = url;
+    });
   },
 
   buildMusicContext(){
@@ -3187,14 +3217,16 @@ const Recap = {
     try{
       // Gemini occasionally returns 503 (high demand). Retry transparently so the
       // user just waits instead of re-tapping on game night.
-      for (let attempt = 1; attempt <= 4; attempt++){
+      for (let attempt = 1; attempt <= 6; attempt++){
         const { data, error } = await Cloud.sb.functions.invoke('game-recap', { body });
         let detail = '';
         if (error){ try{ detail = await error.context.text(); }catch(_){} }
-        const overloaded = /503|UNAVAILABLE|high demand|overloaded/i.test(detail || ((data&&data.error)||''));
-        if (overloaded && attempt < 4){
-          busy.textContent = 'Gemini is busy — retrying (' + attempt + '/3)…';
-          await new Promise(r => setTimeout(r, 2500 * attempt));
+        const blob = detail || ((data && data.error) || '');
+        const rateLimited = /429|RESOURCE_EXHAUSTED|rate limit|quota/i.test(blob);
+        const overloaded = /503|UNAVAILABLE|high demand|overloaded/i.test(blob);
+        if ((rateLimited || overloaded) && attempt < 6){
+          busy.textContent = (rateLimited ? 'Gemini rate limit — waiting' : 'Gemini is busy — retrying') + ' (' + attempt + '/5)…';
+          await new Promise(r => setTimeout(r, (rateLimited ? 6000 : 2500) * attempt));
           continue;
         }
         if (error){ throw new Error(detail || error.message); }
@@ -3204,7 +3236,7 @@ const Recap = {
         this.renderStep2();
         return;
       }
-      throw new Error('Gemini is overloaded right now — give it a minute and try again');
+      throw new Error('Gemini\'s free limit is busy right now — wait a minute and tap Generate again');
     }catch(e){ console.error(e); toast('Recap failed: ' + String(e.message||e).slice(0,120)); }
     finally{ busy.style.display = 'none'; $('#recapGenerate').disabled = false; }
   },
