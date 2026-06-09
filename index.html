@@ -3166,19 +3166,35 @@ const Recap = {
   async generate(){
     const text = $('#recapText').value.trim();
     if (!this.images.length && !text){ toast('Add a screenshot or paste the box score'); return; }
-    $('#recapBusy').style.display = ''; $('#recapGenerate').disabled = true;
+    const busy = $('#recapBusy');
+    busy.style.display = ''; busy.textContent = 'Reading the box score & writing the recap…';
+    $('#recapGenerate').disabled = true;
+    const body = { musicContext: this.buildMusicContext() };
+    if (this.images.length){ body.images = this.images; body.imageBase64 = this.images[0].data; body.imageMime = this.images[0].mime; }
+    else body.boxScoreText = text;
     try{
-      const body = { musicContext: this.buildMusicContext() };
-      if (this.images.length){ body.images = this.images; body.imageBase64 = this.images[0].data; body.imageMime = this.images[0].mime; }
-      else body.boxScoreText = text;
-      const { data, error } = await Cloud.sb.functions.invoke('game-recap', { body });
-      if (error){ let d=''; try{ d = await error.context.text(); }catch(_){} throw new Error(d || error.message); }
-      if (!data || !data.ok || !data.result){ throw new Error((data && data.error) || 'No result'); }
-      if (data.result.readOk === false){ toast('Couldn\'t read the stats — try a clearer/cropped screenshot'); return; }
-      this.result = data.result;
-      this.renderStep2();
-    }catch(e){ console.error(e); toast('Recap failed: ' + (e.message||e).slice(0,120)); }
-    finally{ $('#recapBusy').style.display = 'none'; $('#recapGenerate').disabled = false; }
+      // Gemini occasionally returns 503 (high demand). Retry transparently so the
+      // user just waits instead of re-tapping on game night.
+      for (let attempt = 1; attempt <= 4; attempt++){
+        const { data, error } = await Cloud.sb.functions.invoke('game-recap', { body });
+        let detail = '';
+        if (error){ try{ detail = await error.context.text(); }catch(_){} }
+        const overloaded = /503|UNAVAILABLE|high demand|overloaded/i.test(detail || ((data&&data.error)||''));
+        if (overloaded && attempt < 4){
+          busy.textContent = 'Gemini is busy — retrying (' + attempt + '/3)…';
+          await new Promise(r => setTimeout(r, 2500 * attempt));
+          continue;
+        }
+        if (error){ throw new Error(detail || error.message); }
+        if (!data || !data.ok || !data.result){ throw new Error((data && data.error) || 'No result'); }
+        if (data.result.readOk === false){ toast('Couldn\'t read the stats — try a clearer or cropped screenshot'); return; }
+        this.result = data.result;
+        this.renderStep2();
+        return;
+      }
+      throw new Error('Gemini is overloaded right now — give it a minute and try again');
+    }catch(e){ console.error(e); toast('Recap failed: ' + String(e.message||e).slice(0,120)); }
+    finally{ busy.style.display = 'none'; $('#recapGenerate').disabled = false; }
   },
 
   renderStep2(){
