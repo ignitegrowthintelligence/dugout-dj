@@ -4258,13 +4258,26 @@ const Cloud = {
     const map = await kvGet('cloud_paths', {});
     const want = 'team-' + teamId + '/' + blobId;
     if (map[blobId] === want) return want;
+    // If a previous upload this session was blocked by the team-scoped
+    // storage policy (Justin hasn't applied the v8 SQL yet), don't bother
+    // hammering Supabase on every sync — just use the per-user path.
+    if (this._teamUploadBlocked) return map[blobId] || await this._ensureUploaded(blobId);
     const blob = await blobGet(blobId);
     if (!blob) return map[blobId] || null;
     const { error } = await this.sb.storage.from('dugout-clips')
-      .upload(want, blob, { upsert: true, contentType: blob.type || 'audio/mpeg' });
+      .upload(want, blob, { upsert: true, contentType: blob.type || 'auto' });
     if (error){
-      console.warn('team upload failed', error);
-      // fall back to the original per-user path (still works for the owner)
+      // RLS denial → flip the per-session flag so we stop retrying. Other
+      // errors (network, etc.) we just warn about and fall back, but don't
+      // give up — they may recover.
+      if (/row-level security/i.test(error.message || '')){
+        if (!this._teamUploadBlocked){
+          this._teamUploadBlocked = true;
+          console.info('Team-scoped storage upload blocked by RLS — falling back to per-user paths. Apply the v8 Supabase migration to enable team sharing.');
+        }
+      } else {
+        console.warn('team upload failed', error);
+      }
       return map[blobId] || await this._ensureUploaded(blobId);
     }
     map[blobId] = want;
