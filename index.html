@@ -459,6 +459,51 @@
   .mixer-toolbar { display:grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
   .mixer-sliders { display:grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
   .mixer-sliders label.field { margin: 0; }
+  .mixer-adv {
+    margin-top: 12px;
+    padding: 12px;
+    background: var(--bg-3);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding-bottom: calc(12px + env(safe-area-inset-bottom));
+  }
+  .mixer-adv-head {
+    font-size: 12px; font-weight: 700; color: var(--text-dim);
+    letter-spacing: .3px; margin-bottom: 8px;
+  }
+  .adv-row {
+    display: grid;
+    grid-template-columns: 1fr auto auto auto;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 0;
+  }
+  .adv-row + .adv-row { border-top: 1px solid var(--line); margin-top: 4px; padding-top: 8px; }
+  .adv-label {
+    font-size: 13px; color: var(--text);
+  }
+  .adv-arrow {
+    min-height: 38px; min-width: 44px;
+    background: var(--bg-3); border: 1px solid var(--line); color: var(--text);
+    border-radius: 10px; font-size: 18px; font-weight: 700;
+    display: inline-flex; align-items: center; justify-content: center;
+    cursor: pointer; padding: 0; user-select: none; -webkit-user-select: none;
+    touch-action: manipulation;
+  }
+  .adv-arrow:active { transform: scale(.96); background: var(--bg-2); }
+  .adv-arrow:disabled { opacity: .35; cursor: not-allowed; }
+  .adv-value {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 14px; color: var(--accent-2);
+    min-width: 64px; text-align: center;
+    padding: 0 4px;
+  }
+  .btn.unsaved {
+    box-shadow: 0 0 0 2px var(--warn, #f0b328);
+  }
+  .btn.unsaved::after {
+    content: " *"; opacity: .9;
+  }
   .mode-toggle {
     display:flex; gap: 6px; background: var(--bg-3); padding: 4px; border-radius: 999px;
     border:1px solid var(--line); align-self: start;
@@ -894,13 +939,26 @@
       <div id="dropWarn" style="font-size:12px; color:#f8b34a; display:none; margin-top:6px"></div>
     </details>
 
-    <div class="muted" style="font-size:12px; margin-top: 10px">
-      Drag the <span style="color:#2ee066">green</span> edge handles on the song to choose the clip
-      that plays. Drag the <span style="color:#ffa833">orange</span> announcement bar to set when it
-      kicks in. Drag the <span style="color:#39c5ff">blue "Drop"</span> marker to mark the most
-      exciting moment of the song — Auto-mix lines up the drop with the end of the announcement so
-      the song hits full volume right when the announcer finishes. Tap an empty spot on the song
-      envelope to add a point, drag to move, double-tap a point to remove it.
+    <div class="mixer-adv" id="mixerAdv">
+      <div class="mixer-adv-head">Advanced Adjustments</div>
+      <div class="adv-row">
+        <span class="adv-label">Music Start</span>
+        <button class="adv-arrow" type="button" id="advClipStartDown" aria-label="Decrease Music Start">&lsaquo;</button>
+        <span class="adv-value" id="advClipStartVal">0:00.0</span>
+        <button class="adv-arrow" type="button" id="advClipStartUp" aria-label="Increase Music Start">&rsaquo;</button>
+      </div>
+      <div class="adv-row">
+        <span class="adv-label">Music End</span>
+        <button class="adv-arrow" type="button" id="advClipEndDown" aria-label="Decrease Music End">&lsaquo;</button>
+        <span class="adv-value" id="advClipEndVal">0:00.0</span>
+        <button class="adv-arrow" type="button" id="advClipEndUp" aria-label="Increase Music End">&rsaquo;</button>
+      </div>
+      <div class="adv-row">
+        <span class="adv-label">Announcer Start</span>
+        <button class="adv-arrow" type="button" id="advAnnStartDown" aria-label="Decrease Announcer Start">&lsaquo;</button>
+        <span class="adv-value" id="advAnnStartVal">0:00.0</span>
+        <button class="adv-arrow" type="button" id="advAnnStartUp" aria-label="Increase Announcer Start">&rsaquo;</button>
+      </div>
     </div>
   </div>
 </div>
@@ -3540,6 +3598,8 @@ const Mixer = {
     $('#sAvol').value = this.params.avol; $('#lblAvol').textContent = fmt(this.params.avol);
     this._updateClipLabel();
     this._updateDropWarning();
+    this._refreshAdvanced();
+    this._setDirty(false);
   },
   // v5: warn when the drop is so early there isn't room for the full fade-in
   _updateDropWarning(){
@@ -3575,6 +3635,8 @@ const Mixer = {
     if (this.annStart > hi) this.annStart = hi;
     this.manualPoints = null; this.envCustom = false;
     this.draw();
+    this._refreshAdvanced();
+    this._setDirty(true);
   },
   _parseTime(s){
     s = String(s||'').trim();
@@ -3975,6 +4037,72 @@ const Mixer = {
   },
 
   /* render offline & save as WAV */
+  /* v8.2: Advanced Adjustments — fine-tune nudges */
+  _fmtAdvTime(t){
+    if (!isFinite(t) || t < 0) t = 0;
+    const m = Math.floor(t / 60);
+    const s = t - m * 60;
+    return m + ':' + (s < 10 ? '0' : '') + s.toFixed(1);
+  },
+  _setDirty(d){
+    this._dirty = !!d;
+    const btn = document.getElementById('btnSaveMix');
+    if (btn) btn.classList.toggle('unsaved', !!d);
+  },
+  _refreshAdvanced(){
+    const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = this._fmtAdvTime(v); };
+    set('advClipStartVal', this.clipStart);
+    set('advClipEndVal', this.clipEnd);
+    set('advAnnStartVal', this.annStart);
+    const songDur = this.song ? this.song.duration : 0;
+    const annDur = this.ann ? this.ann.duration : 0;
+    const upd = (id, disabled) => { const el = document.getElementById(id); if (el) el.disabled = !!disabled; };
+    upd('advClipStartDown', !this.song || this.clipStart <= 0);
+    upd('advClipStartUp',   !this.song || this.clipStart >= this.clipEnd - 0.1);
+    upd('advClipEndDown',   !this.song || this.clipEnd <= this.clipStart + 0.1);
+    upd('advClipEndUp',     !this.song || this.clipEnd >= songDur);
+    upd('advAnnStartDown',  !this.song || this.annStart <= this.clipStart);
+    upd('advAnnStartUp',    !this.song || this.annStart >= Math.max(this.clipStart, this.clipEnd - annDur));
+  },
+  _afterAdvNudge(){
+    this._renderStatic();
+    this._updateClipLabel();
+    if (this._updateDropWarning) this._updateDropWarning();
+    this.draw();
+    this._refreshAdvanced();
+    this._setDirty(true);
+  },
+  nudgeClipStart(delta){
+    if (!this.song) return;
+    const newVal = Math.max(0, Math.min(this.clipEnd - 0.1, this.clipStart + delta));
+    if (Math.abs(newVal - this.clipStart) < 1e-9) return;
+    this.clipStart = newVal;
+    if (this.annStart < this.clipStart) this.annStart = this.clipStart;
+    const annDur = this.ann ? this.ann.duration : 0;
+    const hi = Math.max(this.clipStart, this.clipEnd - annDur);
+    if (this.annStart > hi) this.annStart = hi;
+    this._afterAdvNudge();
+  },
+  nudgeClipEnd(delta){
+    if (!this.song) return;
+    const newVal = Math.max(this.clipStart + 0.1, Math.min(this.song.duration, this.clipEnd + delta));
+    if (Math.abs(newVal - this.clipEnd) < 1e-9) return;
+    this.clipEnd = newVal;
+    const annDur = this.ann ? this.ann.duration : 0;
+    const hi = Math.max(this.clipStart, this.clipEnd - annDur);
+    if (this.annStart > hi) this.annStart = hi;
+    this._afterAdvNudge();
+  },
+  nudgeAnnStart(delta){
+    if (!this.song) return;
+    const annDur = this.ann ? this.ann.duration : 0;
+    const lo = this.clipStart;
+    const hi = Math.max(this.clipStart, this.clipEnd - annDur);
+    const newVal = Math.max(lo, Math.min(hi, this.annStart + delta));
+    if (Math.abs(newVal - this.annStart) < 1e-9) return;
+    this.annStart = newVal;
+    this._afterAdvNudge();
+  },
   async saveMix(){
     if (!this.song){ toast('No song'); return; }
     toast('Rendering mix…');
@@ -4014,6 +4142,7 @@ const Mixer = {
     await dbPut('players', p);
     App.renderLineup();
     toast('Mix saved');
+    this._setDirty(false);
     this.close();
   }
 };
@@ -4925,6 +5054,40 @@ window.addEventListener('DOMContentLoaded', async () => {
   $('#btnPreviewMix').addEventListener('click', () => Mixer.preview());
   $('#btnStopPreviewMix').addEventListener('click', () => Mixer.stopPreview());
   $('#btnSaveMix').addEventListener('click', () => Mixer.saveMix());
+
+  // v8.2: Advanced Adjustments — tap/hold nudges
+  (function wireAdvNudges(){
+    const STEP = 0.1;
+    const HOLD_MS = 400;
+    const REPEAT_MS = 150;
+    function bind(btnId, fn){
+      const el = document.getElementById(btnId); if (!el) return;
+      let holdTimer = null, repeatTimer = null, didRepeat = false;
+      const start = (e) => {
+        if (e && e.cancelable) e.preventDefault();
+        didRepeat = false;
+        holdTimer = setTimeout(() => {
+          didRepeat = true;
+          repeatTimer = setInterval(() => { fn(); }, REPEAT_MS);
+        }, HOLD_MS);
+      };
+      const end = () => {
+        if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
+        if (repeatTimer) { clearInterval(repeatTimer); repeatTimer = null; }
+      };
+      el.addEventListener('pointerdown', start);
+      el.addEventListener('pointerup', end);
+      el.addEventListener('pointercancel', end);
+      el.addEventListener('pointerleave', end);
+      el.addEventListener('click', () => { if (!didRepeat) fn(); didRepeat = false; });
+    }
+    bind('advClipStartDown', () => Mixer.nudgeClipStart(-STEP));
+    bind('advClipStartUp',   () => Mixer.nudgeClipStart(+STEP));
+    bind('advClipEndDown',   () => Mixer.nudgeClipEnd(-STEP));
+    bind('advClipEndUp',     () => Mixer.nudgeClipEnd(+STEP));
+    bind('advAnnStartDown',  () => Mixer.nudgeAnnStart(-STEP));
+    bind('advAnnStartUp',    () => Mixer.nudgeAnnStart(+STEP));
+  })();
 
   // master bar
   $('#masterStop').addEventListener('click', () => App.stopAll());
